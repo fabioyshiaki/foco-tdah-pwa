@@ -48,7 +48,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "1.5.1"; // Forçar atualização de cache
+        const appVersion = "1.5.2"; // Corrige o erro de digitação do appId
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -188,7 +188,7 @@
             render(); // Renderiza o estado inicial (loading spinner)
         });
 
-        // --- LÓGICA DE LOGIN ATUALIZADA (v1.5.1) ---
+        // --- LÓGICA DE LOGIN ATUALIZADA (v1.5.2) ---
         function setLoggedInState(user) {
             console.log("...setLoggedInState chamado com:", user ? user.email : "null");
             currentUser = user; 
