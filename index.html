@@ -70,7 +70,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "2.2.1 (Correções de UX e Calendário)";
+        const appVersion = "2.2.2 (Correção Calendário/Objetivos)";
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -208,7 +208,7 @@
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register(swUrl)
-                    .then(registration => console.log('Service Worker v2.2.1 registrado', registration.scope))
+                    .then(registration => console.log('Service Worker v2.2.2 registrado', registration.scope))
                     .catch(error => console.error('Falha no registro do Service Worker', error));
             });
         }
@@ -422,7 +422,6 @@
             const routinesQuery = collection(db, `${dbPathPrefix}/routines`);
             const unsubRoutines = onSnapshot(routinesQuery, (snapshot) => {
                 allRoutines = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                console.log("Rotinas carregadas:", allRoutines.length);
                 if (auth.currentUser) render(); 
             }, (error) => console.error("Erro ao carregar rotinas:", error)); 
             unsubscribes.push(unsubRoutines); 
@@ -447,10 +446,6 @@
                 console.log("Tarefas carregadas:", allTasks.length);
                 if (auth.currentUser) render();
                 
-                // --- CORREÇÃO DO CALENDÁRIO ---
-                // Se a página do calendário estiver ativa, a *render() principal*
-                // vai chamar o initializeFullCalendar().
-                // Se já estivermos lá, apenas atualizamos os eventos.
                 if (currentPage === 'taskCalendar' && window.myCalendar) {
                     initializeFullCalendar(); // Recarrega os eventos
                 }
@@ -468,6 +463,18 @@
         // --- Funções de Renderização (UI) ---
 
         function render() {
+            // Destrói gráficos e calendários antigos antes de mudar de página
+            if (currentPage !== 'progress') {
+                Object.values(window.myCharts).forEach(chart => chart.destroy());
+                window.myCharts = {};
+            }
+            if (currentPage !== 'taskCalendar') {
+                if (window.myCalendar) {
+                    window.myCalendar.destroy();
+                    window.myCalendar = null;
+                }
+            }
+
             const appContainer = document.getElementById('app-container');
             const header = document.getElementById('main-header');
             const bottomNav = document.getElementById('bottom-nav');
@@ -515,13 +522,14 @@
                             if(headerTitle) headerTitle.innerText = "Calendário";
                             appContainer.innerHTML = renderTaskCalendar();
                             // Renderiza o calendário DEPOIS que o HTML (canvas) está na página
-                            initializeFullCalendar();
+                            // Usamos setTimeout para garantir que o DOM foi pintado
+                            setTimeout(initializeFullCalendar, 0); 
                             break;
                         case 'progress':
                             if(headerTitle) headerTitle.innerText = "Meu Progresso";
                             appContainer.innerHTML = renderProgressPage();
                             // Renderiza os gráficos DEPOIS que o HTML (canvas) está na página
-                            renderAllCharts();
+                            setTimeout(renderAllCharts, 0);
                             break;
                     }
                     renderBottomNav(); // Atualiza o estado ativo da tab bar
@@ -1096,7 +1104,7 @@
             return html;
         }
 
-        // --- CALENDÁRIO AVANÇADO (v2.2.0) ---
+        // --- CALENDÁRIO AVANÇADO (v2.2.1 - CORREÇÃO) ---
         function renderTaskCalendar() {
             // Apenas o container. O FullCalendar será inicializado depois.
             return `
@@ -1115,7 +1123,10 @@
             }
             
             const calendarEl = document.getElementById('calendar');
-            if (!calendarEl) return;
+            if (!calendarEl) {
+                console.error("Elemento #calendar não encontrado. Abortando.");
+                return;
+            }
             
             // Destrói o calendário antigo antes de desenhar um novo
             if (window.myCalendar) {
@@ -1141,7 +1152,9 @@
             const isDark = document.documentElement.classList.contains('dark');
 
             window.myCalendar = new FullCalendar.Calendar(calendarEl, {
-                plugins: [ FullCalendar.dayGridPlugin, FullCalendar.timeGridPlugin, FullCalendar.listPlugin ], // Carrega os plugins
+                // --- CORREÇÃO v2.2.2 ---
+                // REMOVIDO: 'plugins' array. O bundle 'index.global.min.js' já inclui tudo.
+                // ---------------------
                 initialView: 'dayGridMonth',
                 locale: 'pt-br', // Tradução
                 buttonText: { // Tradução dos botões
@@ -1172,7 +1185,7 @@
             window.myCalendar.render();
         }
         
-        // --- PÁGINA DE OBJETIVOS (v2.1.0) ---
+        // --- PÁGINA DE OBJETIVOS (v2.2.2 - CORREÇÃO) ---
         function renderGoalStats() {
             const activeGoals = allGoals.filter(goal => !goal.completed);
             const completedGoals = allGoals.filter(goal => goal.completed);
@@ -1181,29 +1194,19 @@
                 <div class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-xl">
                     <div class="flex justify-between items-center mb-4">
                         <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100">Objetivos</h2>
+                        <!-- Botão de adicionar movido para a tela 'main'
                         <button data-action="open-modal" data-modal="addGoal" class="text-sky-600 hover:text-sky-800 dark:hover:text-sky-400 p-1 rounded-full hover:bg-sky-100 dark:hover:bg-slate-700 transition-colors">
                             <i data-lucide="plus-circle" class="w-7 h-7"></i>
                         </button>
+                        -->
                     </div>
                     
-                    <!-- Objetivos Ativos -->
+                    <!-- Objetivos Ativos (MODO LEITURA) -->
                     <div>
                         <h3 class="text-2xl font-semibold text-slate-700 dark:text-slate-200 mb-4">Ativos</h3>
                         <div class="space-y-4">
                             ${activeGoals.length > 0 ? activeGoals.map(goal => `
-                                <div class="flex items-center justify-between bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 p-4 rounded-lg">
-                                    <label class="flex items-center space-x-4 text-xl text-slate-800 dark:text-slate-100">
-                                        <input type="checkbox" 
-                                               class="form-checkbox h-7 w-7 text-emerald-600 rounded-md border-slate-300 dark:border-slate-500 focus:ring-emerald-500"
-                                               data-action="complete-goal"
-                                               data-id="${goal.id}"
-                                               data-name="${goal.name}">
-                                        <span>${goal.name}</span>
-                                    </label>
-                                    <button data-action="delete-goal" data-id="${goal.id}" class="text-slate-400 dark:text-slate-500 hover:text-rose-500 transition-colors">
-                                            <i data-lucide="trash-2" class="w-5 h-5"></i>
-                                    </button>
-                                </div>
+                                <p class="text-xl text-slate-700 dark:text-slate-200 p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg">${goal.name}</p>
                             `).join('') : `<p class="text-slate-500 dark:text-slate-400 text-lg">Nenhum objetivo ativo.</p>`}
                         </div>
                     </div>
@@ -1656,7 +1659,7 @@
             }
         }
         
-        // --- LÓGICA DE OBJETIVO ATUALIZADA (v2.2.0) ---
+        // --- LÓGICA DE OBJETIVO ATUALIZADA (v2.2.1) ---
         async function handleCompleteGoal(checkbox) {
              const goalId = checkbox.dataset.id;
              const goalName = checkbox.dataset.name;
@@ -1813,7 +1816,7 @@
             background-color: #334155 !important; /* slate-700 */
         }
         .dark .fc .fc-day-today {
-            background-color: #1e293b !important; /* slate-800 */
+            background-color: #334155 !important; /* slate-700, um pouco mais escuro */
         }
         .dark .fc .fc-toolbar-title {
             color: #f1f5f9; /* slate-100 */
@@ -1826,13 +1829,26 @@
         .dark .fc .fc-button-primary:hover {
             background-color: #475569; /* slate-600 */
         }
+        .fc-event-pending {
+            background-color: #bae6fd !important; /* sky-200 */
+            border-color: #7dd3fc !important; /* sky-300 */
+            color: #0c4a6e !important; /* sky-900 */
+        }
         .dark .fc-event-pending {
-            background-color: #0369a1 !important; /* sky-700 */
-            border-color: #0ea5e9 !important; /* sky-500 */
+            background-color: #0c4a6e !important; /* sky-900 */
+            border-color: #0369a1 !important; /* sky-700 */
+            color: #e0f2fe !important; /* sky-100 */
+        }
+        .fc-event-completed {
+            background-color: #d1fae5 !important; /* emerald-100 */
+            border-color: #a7f3d0 !important; /* emerald-200 */
+            color: #065f46 !important; /* emerald-800 */
+            opacity: 0.7;
         }
         .dark .fc-event-completed {
-            background-color: #065f46 !important; /* emerald-800 */
-            border-color: #10b981 !important; /* emerald-500 */
+            background-color: #064e3b !important; /* emerald-900 */
+            border-color: #059669 !important; /* emerald-600 */
+            color: #a7f3d0 !important; /* emerald-200 */
             opacity: 0.6;
         }
     </style>
