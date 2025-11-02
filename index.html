@@ -70,7 +70,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "2.3.4 (Correção do Bug Crítico de Tarefas)";
+        const appVersion = "2.3.5 (Novas Cores de Urgência)";
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -209,7 +209,7 @@
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register(swUrl)
-                    .then(registration => console.log('Service Worker v2.3.4 registrado', registration.scope))
+                    .then(registration => console.log('Service Worker v2.3.5 registrado', registration.scope))
                     .catch(error => console.error('Falha no registro do Service Worker', error));
             });
         }
@@ -450,10 +450,6 @@
                 allTasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 console.log("Tarefas carregadas:", allTasks.length);
                 if (auth.currentUser) render();
-                
-                if (currentPage === 'taskCalendar' && window.myCalendar) {
-                    initializeFullCalendar(); // Recarrega os eventos
-                }
             }, (error) => console.error("Erro ao carregar tarefas:", error));
             unsubscribes.push(unsubTasks);
 
@@ -769,7 +765,7 @@
             }
             
             return upcomingTasks.map(task => {
-                // --- CORREÇÃO v2.3.4: Chama a função global ---
+                // --- CORREÇÃO v2.3.5: Chama a função global ---
                 const countdown = getTaskCountdown(task); 
                 const isCompleted = task.completed;
                 
@@ -1217,9 +1213,19 @@
                                     <div data-action="view-day-tasks" data-date="${dateStr}" class="border-r border-b border-slate-200 dark:border-slate-700 h-24 md:h-28 p-1.5 overflow-y-auto relative hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer">
                                         <div class="font-semibold text-sm ${isToday ? 'bg-sky-600 text-white rounded-full w-6 h-6 flex items-center justify-center' : 'text-slate-700 dark:text-slate-300'}">${day}</div>
                                         <div class="mt-1 space-y-1">
-                                            ${tasksForDay.map(task => `
-                                                <div class="w-full h-1.5 rounded ${task.completed ? 'bg-emerald-500' : 'bg-sky-500'}"></div>
-                                            `).join('')}
+                                            ${tasksForDay.map(task => {
+                                                // --- CORREÇÃO v2.3.5: Lógica de cor da bolinha ---
+                                                let colorClass = 'bg-sky-500'; // Default
+                                                if (task.completed) {
+                                                    colorClass = 'bg-emerald-500';
+                                                } else {
+                                                    const countdown = getTaskCountdown(task);
+                                                    if (countdown.color === 'rose') colorClass = 'bg-rose-500';
+                                                    else if (countdown.color === 'orange') colorClass = 'bg-orange-500';
+                                                    else if (countdown.color === 'emerald') colorClass = 'bg-emerald-500';
+                                                }
+                                                return `<div class="w-full h-1.5 rounded ${colorClass}"></div>`;
+                                            }).join('')}
                                         </div>
                                     </div>
                                 `;
@@ -1228,7 +1234,6 @@
                     </div>
                 </div>
             `;
-            // NÃO chama o initializeFullCalendar aqui
             return html;
         }
         
@@ -1906,7 +1911,9 @@
             const diffDays = Math.ceil((new Date(year, month - 1, day).getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24));
             
             if (diffDays === 0) return { text: "Hoje", color: "rose" }; // Fallback para tarefas sem hora
-            if (diffDays === 1) return { text: "1 dia", color: "rose" };
+            
+            // --- CORREÇÃO v2.3.5: Nova lógica de cores ---
+            if (diffDays <= 2) return { text: `${diffDays} ${diffDays === 1 ? 'dia' : 'dias'}`, color: "rose" };
             if (diffDays <= 4) return { text: `${diffDays} dias`, color: "orange" };
             return { text: `${diffDays} dias`, color: "emerald" };
         }
