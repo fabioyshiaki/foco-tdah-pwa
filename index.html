@@ -74,6 +74,7 @@
         let unsubscribes = []; 
 
         // Estado da UI
+        let isProcessingLogin = true; // <-- NOVO: Começa como 'true'
         let isLoggedIn = false; 
         let currentPage = 'main'; 
         let currentModal = null; 
@@ -166,7 +167,7 @@
         document.addEventListener('DOMContentLoaded', () => {
             initializeAppFirebase();
             setupEventListeners();
-            render(); // Renderiza o estado inicial (tela de login ou loading)
+            render(); // Renderiza o estado inicial (loading spinner)
         });
 
         async function initializeAppFirebase() {
@@ -175,6 +176,7 @@
 
                 if (!firebaseConfig.apiKey || firebaseConfig.apiKey === "SUA_CHAVE_API_SECRETA_COLE_AQUI") {
                     console.error("Configuração do Firebase não encontrada. Cole o seu objeto firebaseConfig.");
+                    isProcessingLogin = false; // Permite renderizar o erro
                     document.getElementById('app-container').innerHTML = `<p class="text-red-500 p-4">Erro: Chave API não encontrada. Edite o arquivo HTML e cole sua chave API.</p>`;
                     return;
                 }
@@ -186,44 +188,54 @@
                 await setPersistence(auth, browserLocalPersistence);
 
                 console.log("Firebase inicializado. Verificando estado de autenticação...");
-                
-                try {
-                    console.log("Verificando se há um redirecionamento de login...");
-                    const result = await getRedirectResult(auth);
-                    if (result) {
-                        console.log("Login por redirect bem-sucedido:", result.user.displayName);
-                    } else {
-                        console.log("Nenhum redirect encontrado, carregamento normal.");
-                    }
-                } catch(error) {
-                    console.error("Erro ao obter resultado do redirect:", error);
-                    const errorEl = document.getElementById('login-error-message');
-                    if (errorEl) {
-                        errorEl.innerText = `Erro ao verificar login: ${error.message}`;
-                    }
-                }
 
-                onAuthStateChanged(auth, (user) => {
+                onAuthStateChanged(auth, async (user) => {
                     if (user) {
-                        // Usuário está logado
+                        // Caso A: Usuário está logado (ou acabou de logar)
                         userId = user.uid;
                         isLoggedIn = true;
+                        isProcessingLogin = false; // <-- Acabou de processar
                         console.log("Usuário autenticado:", userId, user.displayName);
                         dbPathPrefix = `/artifacts/${appId}/users/${userId}`;
                         loadAllData(); // Carrega os dados
                         render(); // Renderiza o app principal
                     } else {
-                        // Usuário está deslogado
-                        userId = null;
-                        isLoggedIn = false;
-                        console.log("Nenhum usuário logado.");
-                        clearAllData(); // Limpa dados locais
-                        render(); // Renderiza a tela de login
+                        // Caso B ou C: Ninguém logado AINDA.
+                        // Precisamos checar se é um retorno de redirect.
+                        try {
+                            console.log("onAuthStateChanged(null), verificando redirect...");
+                            const result = await getRedirectResult(auth);
+                            
+                            if (result) {
+                                // Caso C: É um retorno de redirect!
+                                // 'onAuthStateChanged' vai ser chamado DE NOVO,
+                                // mas desta vez com o 'user' (Caso A).
+                                // Não fazemos nada aqui, só esperamos.
+                                console.log("Resultado do redirect pego! Aguardando o próximo onAuthStateChanged...", result.user.displayName);
+                                // isProcessingLogin continua 'true'
+                            } else {
+                                // Caso B: Ninguém logado, e não é um redirect.
+                                // O usuário está *realmente* deslogado.
+                                console.log("Nenhum usuário logado e nenhum redirect.");
+                                userId = null;
+                                isLoggedIn = false;
+                                isProcessingLogin = false; // <-- Acabou de processar
+                                clearAllData(); 
+                                render(); // Renderiza a tela de login
+                            }
+                        } catch (error) {
+                            console.error("Erro ao obter resultado do redirect:", error);
+                            isProcessingLogin = false; // <-- Acabou de processar
+                            render(); // Renderiza a tela de login com erro
+                            const errorEl = document.getElementById('login-error-message');
+                            if (errorEl) errorEl.innerText = `Erro ao processar login: ${error.message}`;
+                        }
                     }
                 });
 
             } catch (error) {
                 console.error("Erro ao inicializar Firebase:", error);
+                isProcessingLogin = false;
                 document.getElementById('app-container').innerHTML = `<p class="text-red-500 p-4">Erro ao conectar com o banco de dados.</p>`;
             }
         }
@@ -231,7 +243,6 @@
         // --- FUNÇÕES DE LOGIN / LOGOUT ---
         
         async function handleGoogleLogin() {
-            // --- NOVO: Limpa erros antigos ---
             const errorEl = document.getElementById('login-error-message');
             if (errorEl) errorEl.innerText = '';
         
@@ -241,8 +252,6 @@
                 // A página será redirecionada
             } catch (error) {
                 console.error("Erro ao fazer login com Google:", error);
-                
-                // --- NOVO: Mostra o erro na tela ---
                 if (errorEl) {
                     if (error.code === 'auth/operation-not-allowed') {
                         errorEl.innerText = "Erro: Login com Google não está ativado. Siga o 'Guia - Ativar Login com Google' no console do Firebase.";
@@ -267,6 +276,7 @@
                 
                 clearAllData();
                 isLoggedIn = false;
+                isProcessingLogin = true; // <-- Volta a processar
                 userId = null;
                 
                 initializeAppFirebase();
@@ -349,13 +359,26 @@
             const menuButton = document.getElementById('menu-button');
             
             if (!appContainer || !header || !sidebar || !menuButton) return;
-
-            if (!isLoggedIn) {
+            
+            // --- LÓGICA DE RENDERIZAÇÃO ATUALIZADA ---
+            if (isProcessingLogin) {
+                // Se estamos checando o login, mostra spinner
+                header.classList.add('hidden');
+                sidebar.classList.add('hidden');
+                menuButton.classList.add('hidden');
+                appContainer.innerHTML = `
+                    <div class="flex flex-col items-center justify-center min-h-[70vh] p-8 text-center">
+                        <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-sky-500"></div>
+                        <p class="text-slate-600 text-xl mt-6 font-semibold">Verificando login...</p>
+                    </div>`;
+            } else if (!isLoggedIn) {
+                // Se não está logado, mostra tela de login
                 header.classList.add('hidden');
                 sidebar.classList.add('hidden');
                 menuButton.classList.add('hidden');
                 appContainer.innerHTML = renderLoginScreen();
             } else {
+                // Se está logado, mostra o app normal
                 header.classList.remove('hidden');
                 sidebar.classList.remove('hidden'); 
                 menuButton.classList.remove('hidden');
@@ -381,6 +404,7 @@
                         break;
                 }
             }
+            // --- FIM DA LÓGICA CONDICIONAL ---
 
             renderModal();
             
@@ -399,7 +423,7 @@
                         <svg class="w-6 h-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8c-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4C12.955 4 4 12.955 4 24s8.955 20 20 20s20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"></path><path fill="#FF3D00" d="m6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4C16.318 4 9.656 8.337 6.306 14.691z"></path><path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238C29.211 35.091 26.715 36 24 36c-5.202 0-9.619-3.108-11.283-7.446l-6.522 5.025C9.505 39.556 16.227 44 24 44z"></path><path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303c-.792 2.237-2.231 4.166-4.087 5.571l6.19 5.238C39.712 34.421 44 28.134 44 20c0-1.341-.138-2.65-.389-3.917z"></path></svg>
                         <span>Entrar com Google</span>
                     </button>
-                    <!-- NOVO: Local para mostrar erros de login -->
+                    <!-- Local para mostrar erros de login -->
                     <p id="login-error-message" class="text-red-600 font-semibold mt-6 text-lg"></p>
                 </div>
             `;
