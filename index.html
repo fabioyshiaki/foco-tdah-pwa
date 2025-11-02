@@ -47,6 +47,10 @@
             terminate 
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
+        // --- VERSÃO DO APP ---
+        const appVersion = "1.1.0";
+        // ---------------------
+
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
         // COLE SUA CHAVE 'apiKey' SECRETA NA LINHA ABAIXO:
         const firebaseConfig = {
@@ -74,7 +78,7 @@
         let unsubscribes = []; 
 
         // Estado da UI
-        let isProcessingLogin = true; // <-- NOVO: Começa como 'true'
+        let isProcessingLogin = true; // <-- Começa 'true' para mostrar "Verificando..."
         let isLoggedIn = false; 
         let currentPage = 'main'; 
         let currentModal = null; 
@@ -106,7 +110,7 @@
             "display": "standalone",
             "background_color": "#f1f5f9", // bg-slate-100
             "theme_color": "#0ea5e9", // bg-sky-500
-            "description": "Seu assistente pessoal para rotinas, tarefas e foco.",
+            "description": `Seu assistente pessoal para rotinas, tarefas e foco. v${appVersion}`,
             "icons": [
                 { "src": "https://placehold.co/192x192/0ea5e9/white?text=Foco&font=sans-serif", "type": "image/png", "sizes": "192x192" },
                 { "src": "https://placehold.co/512x512/0ea5e9/white?text=Foco&font=sans-serif", "type": "image/png", "sizes": "512x512" }
@@ -118,7 +122,7 @@
 
         // 2. Service Worker (inline)
         const swScript = `
-            const CACHE_NAME = 'foco-tdah-cache-v1';
+            const CACHE_NAME = 'foco-tdah-cache-v${appVersion}'; // Versão do Cache
             const urlsToCache = [
                 '/',
                 'https://cdn.tailwindcss.com',
@@ -129,6 +133,18 @@
                 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap',
                 'https://fonts.gstatic.com/s/inter/v13/UcC73FwrK3iLTeHuS_fvQtMwCp50KnMa1ZL7.woff2'
             ];
+
+            // Limpa caches antigos
+            self.addEventListener('activate', event => {
+                event.waitUntil(
+                    caches.keys().then(cacheNames => {
+                        return Promise.all(
+                            cacheNames.filter(cacheName => cacheName !== CACHE_NAME)
+                                      .map(cacheName => caches.delete(cacheName))
+                        );
+                    })
+                );
+            });
 
             self.addEventListener('install', event => {
                 event.waitUntil(
@@ -188,50 +204,43 @@
                 await setPersistence(auth, browserLocalPersistence);
 
                 console.log("Firebase inicializado. Verificando estado de autenticação...");
+                
+                // --- LÓGICA DE LOGIN ATUALIZADA ---
+                // 1. Processa o resultado do redirect PRIMEIRO.
+                try {
+                    await getRedirectResult(auth);
+                } catch(error) {
+                    // Isso captura erros como "conta já existe com outra credencial"
+                    console.error("Erro ao processar redirect:", error);
+                    isProcessingLogin = false; // Sai do estado de "verificando"
+                    render(); // Mostra a tela de login
+                    const errorEl = document.getElementById('login-error-message');
+                    if (errorEl) errorEl.innerText = `Erro: ${error.message}`;
+                    return; // Para a execução
+                }
 
-                onAuthStateChanged(auth, async (user) => {
+                // 2. AGORA, o onAuthStateChanged vai ter o estado correto na primeira chamada.
+                onAuthStateChanged(auth, (user) => {
+                    isProcessingLogin = false; // <-- Resposta definitiva recebida!
+
                     if (user) {
-                        // Caso A: Usuário está logado (ou acabou de logar)
+                        // Usuário está logado
                         userId = user.uid;
                         isLoggedIn = true;
-                        isProcessingLogin = false; // <-- Acabou de processar
                         console.log("Usuário autenticado:", userId, user.displayName);
                         dbPathPrefix = `/artifacts/${appId}/users/${userId}`;
                         loadAllData(); // Carrega os dados
                         render(); // Renderiza o app principal
                     } else {
-                        // Caso B ou C: Ninguém logado AINDA.
-                        // Precisamos checar se é um retorno de redirect.
-                        try {
-                            console.log("onAuthStateChanged(null), verificando redirect...");
-                            const result = await getRedirectResult(auth);
-                            
-                            if (result) {
-                                // Caso C: É um retorno de redirect!
-                                // 'onAuthStateChanged' vai ser chamado DE NOVO,
-                                // mas desta vez com o 'user' (Caso A).
-                                // Não fazemos nada aqui, só esperamos.
-                                console.log("Resultado do redirect pego! Aguardando o próximo onAuthStateChanged...", result.user.displayName);
-                                // isProcessingLogin continua 'true'
-                            } else {
-                                // Caso B: Ninguém logado, e não é um redirect.
-                                // O usuário está *realmente* deslogado.
-                                console.log("Nenhum usuário logado e nenhum redirect.");
-                                userId = null;
-                                isLoggedIn = false;
-                                isProcessingLogin = false; // <-- Acabou de processar
-                                clearAllData(); 
-                                render(); // Renderiza a tela de login
-                            }
-                        } catch (error) {
-                            console.error("Erro ao obter resultado do redirect:", error);
-                            isProcessingLogin = false; // <-- Acabou de processar
-                            render(); // Renderiza a tela de login com erro
-                            const errorEl = document.getElementById('login-error-message');
-                            if (errorEl) errorEl.innerText = `Erro ao processar login: ${error.message}`;
-                        }
+                        // Usuário está deslogado
+                        console.log("Nenhum usuário logado.");
+                        userId = null;
+                        isLoggedIn = false;
+                        clearAllData(); 
+                        render(); // Renderiza a tela de login
                     }
                 });
+                // --- FIM DA LÓGICA DE LOGIN ---
 
             } catch (error) {
                 console.error("Erro ao inicializar Firebase:", error);
@@ -279,7 +288,7 @@
                 isProcessingLogin = true; // <-- Volta a processar
                 userId = null;
                 
-                initializeAppFirebase();
+                initializeAppFirebase(); // Reinicia o processo de autenticação
                 render(); 
 
             } catch (error) {
@@ -405,6 +414,10 @@
                 }
             }
             // --- FIM DA LÓGICA CONDICIONAL ---
+            
+            // Adiciona a versão ao menu
+            const versionEl = document.getElementById('version-number');
+            if (versionEl) versionEl.innerText = `v${appVersion}`;
 
             renderModal();
             
@@ -425,6 +438,7 @@
                     </button>
                     <!-- Local para mostrar erros de login -->
                     <p id="login-error-message" class="text-red-600 font-semibold mt-6 text-lg"></p>
+                    <p class="text-sm text-slate-500 mt-10">Versão: ${appVersion}</p>
                 </div>
             `;
         }
@@ -1245,8 +1259,9 @@
                     <span>Ver Objetivos</span>
                 </a>
             </div>
-            <!-- Botão de Sair (Logout) -->
+            <!-- Informações de Versão e Logout -->
             <div class="p-4 border-t border-slate-700">
+                 <div class="px-4 py-2 text-xs text-slate-500" id="version-number">v...</div>
                  <a href="#" data-action="nav-logout" class="flex items-center space-x-3 px-4 py-3 text-lg text-rose-400 hover:bg-slate-800 hover:text-rose-300 transition-colors duration-200 rounded-lg">
                     <i data-lucide="log-out" class=""></i>
                     <span>Sair (Logout)</span>
