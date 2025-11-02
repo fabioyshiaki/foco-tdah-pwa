@@ -28,10 +28,8 @@
             GoogleAuthProvider,
             signInWithRedirect, 
             getRedirectResult,  
-            signOut,
-            signInAnonymously, 
-            linkWithRedirect,
-            linkWithCredential
+            signOut
+            // Removemos signInAnonymously e linkWithRedirect
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { 
             getFirestore, 
@@ -51,7 +49,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "1.3.3"; // Corrige o bug do spinner infinito
+        const appVersion = "1.4.0"; // Sem Login Anônimo
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -190,40 +188,31 @@
             render(); // Renderiza o estado inicial (loading spinner)
         });
 
-        // --- LÓGICA DE LOGIN ATUALIZADA (v1.3.3) ---
+        // --- LÓGICA DE LOGIN ATUALIZADA (v1.4.0) ---
         function setLoggedInState(user) {
-            authError = null; // Limpa erros antigos a cada mudança
-            
-            if (!user) {
-                // Se o usuário for nulo (ex: logout), tenta logar anonimamente
-                console.log("...setLoggedInState: user é nulo, tentando login anônimo...");
-                signInAnonymously(auth).catch(err => {
-                    // Isso falha se "Anônimo" não estiver ativado no console
-                    console.error("❌ Erro ao logar anonimamente:", err);
-                    authError = err;
-                    authState = 'DESLOGADO'; // Falha crítica
-                    render();
-                });
-                return;
-            }
-            
-            console.log("...setLoggedInState: user existe. É anônimo?", user.isAnonymous);
-            
-            // --- CORREÇÃO DO BUG v1.3.2 ---
-            // Define o currentUser *aqui*
+            console.log("...setLoggedInState chamado com:", user ? user.email : "null");
             currentUser = user; 
-            // -----------------------------
-            
             userId = user.uid;
+            authState = 'LOGADO';
             dbPathPrefix = `/artifacts/${appId}/users/${userId}`;
-            authState = 'LOGADO'; // Define o estado como LOGADO
             
-            // Verifica se o db precisa ser reinicializado (após logout)
             if (!db) {
                 db = getFirestore(initializeApp(firebaseConfig));
             }
             
             loadAllData();
+            render();
+        }
+        
+        function setLoggedOutState(error) {
+            console.log("...setLoggedOutState chamado");
+            currentUser = null;
+            userId = null;
+            authState = 'DESLOGADO';
+            authError = error; // Salva o erro, se houver
+            clearAllData();
+            unsubscribes.forEach(unsub => unsub());
+            unsubscribes = [];
             render();
         }
 
@@ -245,72 +234,75 @@
                 
                 await setPersistence(auth, browserLocalPersistence);
 
-                console.log("Firebase inicializado. Configurando listener de autenticação...");
-
-                // Tenta pegar o resultado de um LINK (vincular conta)
+                console.log("Firebase inicializado. Verificando estado de autenticação...");
+                
+                // 1. Tenta pegar o resultado do redirect
                 try {
+                    console.log("Verificando redirect...");
                     const result = await getRedirectResult(auth);
-                    if (result) {
-                        console.log("✅ Contas vinculadas com sucesso!", result.user.email);
-                        // O onAuthStateChanged vai lidar com o novo estado
-                    }
-                } catch(error) {
-                    console.error("Erro ao vincular contas:", error);
-                    authError = error; // Salva o erro para mostrar na UI
                     
-                    if (error.code === 'auth/credential-already-in-use') {
-                         console.warn("Conta já existe. Tentando login direto com Google.");
-                         authError = { message: "Esta conta Google já está em uso. Tentando login direto..." };
-                         try {
-                            const provider = new GoogleAuthProvider();
-                            // Força o login com o Google
-                            await signInWithRedirect(auth, provider);
-                         } catch (e) {
-                            console.error("Falha ao tentar login direto:", e);
-                            authError = e;
-                         }
+                    if (result) {
+                        // Sucesso! Usuário logou via redirect.
+                        console.log("✅ Login via redirect:", result.user.email);
+                        setLoggedInState(result.user);
+                        setupAuthListener(); // Configura o listener para logout futuro
+                        return; // FIM
                     }
+                } catch (error) {
+                    // Erro no redirect (unauthorized-domain, etc)
+                    console.error("❌ Erro no getRedirectResult:", error);
+                    setLoggedOutState(error);
+                    setupAuthListener(); // Configura o listener para login futuro
+                    return; // FIM
                 }
 
-                // Listener principal: Lida com login, logout, e login anônimo
-                onAuthStateChanged(auth, setLoggedInState);
+                // 2. Sem redirect. Verifica a sessão (usuário já logado)
+                console.log("Sem redirect. Verificando sessão (onAuthStateChanged)...");
+                const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+                    unsubscribeAuth(); // Só precisamos deste primeiro disparo
+                    if (user) {
+                        // Usuário já estava logado
+                        console.log("✅ Login via Sessão:", user.email);
+                        setLoggedInState(user);
+                    } else {
+                        // Sem redirect E sem sessão. Estamos deslogados.
+                        console.log("❌ Deslogado.");
+                        setLoggedOutState(null);
+                    }
+                    setupAuthListener(); // Configura o listener para logout futuro
+                });
+                // --- FIM DA LÓGICA DE LOGIN ---
 
             } catch (error) {
                 console.error("Erro ao inicializar Firebase:", error);
-                authError = error;
-                authState = 'DESLOGADO';
-                render();
+                setLoggedOutState(error);
             }
+        }
+        
+        // Listener para mudanças futuras (principalmente logout)
+        function setupAuthListener() {
+            onAuthStateChanged(auth, (user) => {
+                if (!user && authState === 'LOGADO') {
+                    // Usuário acabou de deslogar
+                    console.log("🔄 Evento de Logout detectado.");
+                    setLoggedOutState(null);
+                }
+            });
         }
         
         // --- FUNÇÕES DE LOGIN / LOGOUT ---
         
-        async function handleGoogleLoginOrLink() {
+        async function handleGoogleLogin() {
             authError = null; // Limpa erros antigos
             render(); 
         
             const provider = new GoogleAuthProvider();
-            
-            if (!auth.currentUser) {
-                 console.error("Nenhum usuário. Isso não deveria acontecer.");
-                 return;
-            }
-
             try {
-                if (auth.currentUser.isAnonymous) {
-                    // 1. Usuário é anônimo -> Vincula a conta
-                    console.log("...handleGoogleLoginOrLink: Usuário é anônimo. Tentando VINCULAR (linkWithRedirect)...");
-                    await linkWithRedirect(auth.currentUser, provider);
-                } else {
-                    // 2. Usuário já tem conta (mas não Google?) -> Loga
-                    // Isso não deve acontecer no fluxo normal, mas é um fallback
-                    console.log("...handleGoogleLoginOrLink: Usuário NÃO é anônimo. Tentando LOGAR (signInWithRedirect)...");
-                    await signInWithRedirect(auth, provider);
-                }
+                await signInWithRedirect(auth, provider);
+                // A página será redirecionada
             } catch (error) {
-                console.error("Erro ao iniciar login/vinculação com Google:", error);
-                authError = error;
-                render(); // Mostra o erro no menu
+                console.error("Erro ao iniciar login com Google:", error);
+                setLoggedOutState(error);
             }
         }
         
@@ -324,14 +316,10 @@
                     db = null; 
                 }
                 
-                const oldUserId = userId; 
                 await signOut(auth);
+                // O 'onAuthStateChanged' (configurado em setupAuthListener)
+                // vai pegar o evento de logout e chamar setLoggedOutState.
                 
-                // O 'onAuthStateChanged' vai pegar o logout (user=null)
-                // e vai chamar o setLoggedInState, que por sua vez
-                // vai logar o usuário anonimamente DE NOVO.
-                console.log(`Logout da conta ${oldUserId} completo. Logando anonimamente...`);
-
             } catch (error) {
                 console.error("Erro ao fazer logout:", error);
             }
@@ -424,16 +412,16 @@
                     appContainer.innerHTML = `
                         <div class="flex flex-col items-center justify-center min-h-[70vh] p-8 text-center">
                             <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-sky-500"></div>
-                            <p class="text-slate-600 text-xl mt-6 font-semibold">Verificando...</p>
+                            <p class="text-slate-600 text-xl mt-6 font-semibold">Verificando login...</p>
                         </div>`;
                     break;
                 
                 case 'DESLOGADO':
-                    // Mostra tela de login (que agora é só um erro, pois o 'anônimo' deve pegar)
+                    // Mostra tela de login
                     header.classList.add('hidden');
                     sidebar.classList.add('hidden');
                     menuButton.classList.add('hidden');
-                    appContainer.innerHTML = renderErrorScreen();
+                    appContainer.innerHTML = renderLoginScreen();
                     break;
                 
                 case 'LOGADO':
@@ -474,28 +462,8 @@
             if (versionEl) versionEl.innerText = `v${appVersion}`;
             
             if (authButtonEl && authUserEl) {
-                if (authError) {
-                    // Mostra erro de autenticação
-                    authUserEl.innerText = "Erro de Sincronização";
-                    if (authError.code === 'auth/unauthorized-domain') {
-                         authButtonEl.innerHTML = `<p class="text-xs text-rose-400 p-4">Erro: Domínio \`fabioyshiaki.github.io\` não autorizado. Siga o guia.</p>`;
-                    } else if (authError.code === 'auth/operation-not-allowed') {
-                        authButtonEl.innerHTML = `<p class="text-xs text-rose-400 p-4">Erro: Login Anônimo ou com Google não ativado no Firebase.</p>`;
-                    } else if (authError.code === 'auth/credential-already-in-use') {
-                        authButtonEl.innerHTML = `<p class="text-xs text-rose-400 p-4">Erro: Esta conta Google já existe. Tente deslogar e logar direto.</p>`;
-                    } else {
-                         authButtonEl.innerHTML = `<p class="text-xs text-rose-400 p-4">${authError.message}</p>`;
-                    }
-                } else if (currentUser && currentUser.isAnonymous) {
-                    // Estado Anônimo
-                    authUserEl.innerText = "Usuário: Anônimo (Não Sincronizado)";
-                    authButtonEl.innerHTML = `
-                         <a href="#" data-action="auth-login" class="flex items-center space-x-3 px-4 py-3 text-lg text-emerald-400 hover:bg-slate-800 hover:text-emerald-300 transition-colors duration-200 rounded-lg">
-                            <i data-lucide="shield-check" class=""></i>
-                            <span>Login (Sincronizar)</span>
-                        </a>`;
-                } else if (currentUser) {
-                    // Estado Logado
+                if (authState === 'LOGADO' && currentUser) {
+                     // Estado Logado
                     authUserEl.innerText = `Usuário: ${currentUser.displayName || currentUser.email}`;
                     authButtonEl.innerHTML = `
                          <a href="#" data-action="auth-logout" class="flex items-center space-x-3 px-4 py-3 text-lg text-rose-400 hover:bg-slate-800 hover:text-rose-300 transition-colors duration-200 rounded-lg">
@@ -503,9 +471,9 @@
                             <span>Sair (Logout)</span>
                         </a>`;
                 } else {
-                     // Estado de Carregamento Inicial
-                    authUserEl.innerText = "Verificando...";
-                    authButtonEl.innerHTML = ``;
+                     // Estado Deslogado ou Verificando
+                    authUserEl.innerText = "Deslogado";
+                    authButtonEl.innerHTML = ``; // Sem botão de login aqui
                 }
             }
 
@@ -516,17 +484,29 @@
             }
         }
         
-        function renderErrorScreen() {
-             let errorMessage = authError ? authError.message : "Ocorreu um erro desconhecido.";
-             if (authError && authError.code === 'auth/operation-not-allowed') {
-                errorMessage = "Erro: O login anônimo não está ativado no painel do Firebase. Siga o guia para ativá-lo.";
+        function renderLoginScreen() {
+             // Mostra a mensagem de erro, se houver
+             let errorMessage = '';
+             if (authError) {
+                 console.log("Renderizando com erro:", authError.code);
+                 if (authError.code === 'auth/unauthorized-domain') {
+                     errorMessage = "Erro: Este domínio (`fabioyshiaki.github.io`) não está autorizado. Siga o 'Guia - Autorizar Domínio' no Firebase.";
+                 } else {
+                     errorMessage = `Erro: ${authError.message}`;
+                 }
              }
-             
+        
              return `
                 <div class="flex flex-col items-center justify-center min-h-[70vh] p-8 text-center">
-                    <i data-lucide="alert-triangle" class="w-24 h-24 text-rose-500 mb-6"></i>
-                    <h1 class="text-4xl font-bold text-slate-800 mb-3">Erro na Autenticação</h1>
-                    <p class="text-lg text-slate-600 mb-10 max-w-md">${errorMessage}</p>
+                    <i data-lucide="brain" class="w-24 h-24 text-sky-500 mb-6"></i>
+                    <h1 class="text-4xl font-bold text-slate-800 mb-3">Bem-vindo ao Foco TDAH</h1>
+                    <p class="text-xl text-slate-600 mb-10 max-w-md">Para salvar seus dados e sincronizar entre dispositivos, faça o login.</p>
+                    <button id="google-login-btn" class="flex items-center justify-center space-x-3 w-full max-w-sm bg-white border border-slate-300 text-slate-700 text-lg font-semibold py-4 px-6 rounded-lg shadow-md hover:shadow-lg transition-all hover:bg-slate-50">
+                        <svg class="w-6 h-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8c-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4C12.955 4 4 12.955 4 24s8.955 20 20 20s20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"></path><path fill="#FF3D00" d="m6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4C16.318 4 9.656 8.337 6.306 14.691z"></path><path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238C29.211 35.091 26.715 36 24 36c-5.202 0-9.619-3.108-11.283-7.446l-6.522 5.025C9.505 39.556 16.227 44 24 44z"></path><path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303c-.792 2.237-2.231 4.166-4.087 5.571l6.19 5.238C39.712 34.421 44 28.134 44 20c0-1.341-.138-2.65-.389-3.917z"></path></svg>
+                        <span>Entrar com Google</span>
+                    </button>
+                    <!-- Local para mostrar erros de login -->
+                    <p id="auth-error-message" class="text-red-600 font-semibold mt-6 text-lg max-w-sm">${errorMessage}</p>
                     <p class="text-sm text-slate-500 mt-10">Versão: ${appVersion}</p>
                 </div>
             `;
@@ -970,16 +950,18 @@
         function setupEventListeners() {
             document.body.addEventListener('click', (e) => {
                 
+                // Listener do Botão de Login
+                if (e.target.closest('#google-login-btn')) {
+                    handleGoogleLogin();
+                    return;
+                }
+                
                 const target = e.target.closest('[data-action]');
                 if (!target) return;
 
                 const action = target.dataset.action;
                 
-                // Ações de Autenticação (novas)
-                if (action === 'auth-login') {
-                    handleGoogleLoginOrLink();
-                    return;
-                }
+                // Ação de Logout
                 if (action === 'auth-logout') {
                     handleLogout();
                     return;
