@@ -70,7 +70,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "2.3.5 (Novas Cores de Urgência)";
+        const appVersion = "2.4.0 (Ícone de Tarefa Dinâmico)";
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -209,7 +209,7 @@
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register(swUrl)
-                    .then(registration => console.log('Service Worker v2.3.5 registrado', registration.scope))
+                    .then(registration => console.log('Service Worker v2.4.0 registrado', registration.scope))
                     .catch(error => console.error('Falha no registro do Service Worker', error));
             });
         }
@@ -545,6 +545,7 @@
                     }
                     renderBottomNav(); // Atualiza o estado ativo da tab bar
                     renderAlertIcon(); // NOVO: Mostra/esconde o ícone de alerta
+                    renderTaskClockIcon(); // NOVO: Mostra/colore o ícone de relógio
                     break;
             }
             // --- FIM DA LÓGICA CONDICIONAL ---
@@ -593,7 +594,7 @@
             `;
         }
         
-        // --- NOVO: Função para o ícone de Alerta ---
+        // --- NOVO: Funções para os Ícones do Header ---
         function isAlertActive(alert) {
             const createdAt = new Date(alert.createdAt);
             const now = new Date();
@@ -611,6 +612,65 @@
                 icon.classList.remove('hidden');
             } else {
                 icon.classList.add('hidden');
+            }
+        }
+        
+        function renderTaskClockIcon() {
+            const icon = document.getElementById('task-clock-icon');
+            if (!icon) return;
+            
+            const now = new Date();
+            
+            // 1. Filtra apenas por tarefas futuras não concluídas
+            const futureTasks = allTasks.filter(task => {
+                if (task.completed) return false;
+                
+                const [year, month, day] = task.date.split('-').map(Number);
+                let taskTime = [0, 0];
+                if (task.time && task.time.includes(':')) {
+                    taskTime = task.time.split(':').map(Number);
+                }
+                const taskDate = new Date(year, month - 1, day, taskTime[0], taskTime[1]);
+                
+                return taskDate.getTime() > now.getTime();
+            });
+
+            // 2. Se não há tarefas futuras, esconde o ícone
+            if (futureTasks.length === 0) {
+                icon.classList.add('hidden');
+                return;
+            }
+
+            // 3. Ordena para achar a mais próxima
+            futureTasks.sort((a, b) => {
+                const aDate = new Date(`${a.date}T${a.time || '00:00'}`);
+                const bDate = new Date(`${b.date}T${b.time || '00:00'}`);
+                return aDate - bDate;
+            });
+
+            // 4. Pega a mais urgente e sua cor
+            const mostUrgentTask = futureTasks[0];
+            const countdown = getTaskCountdown(mostUrgentTask);
+            const colorName = countdown.color; // 'rose', 'orange', 'emerald'
+
+            // 5. Remove classes de cor antigas e 'hidden'
+            icon.classList.remove('hidden', 'text-rose-500', 'text-orange-500', 'text-emerald-500', 'text-slate-500');
+            icon.classList.add('animate-pulse'); // Faz pulsar
+
+            // 6. Adiciona a classe de cor correta
+            switch(colorName) {
+                case 'rose':
+                    icon.classList.add('text-rose-500');
+                    break;
+                case 'orange':
+                    icon.classList.add('text-orange-500');
+                    break;
+                case 'emerald':
+                    icon.classList.add('text-emerald-500');
+                    icon.classList.remove('animate-pulse'); // Não pulsa se for verde
+                    break;
+                default:
+                    icon.classList.add('text-slate-500'); // Cor para 'Atrasada' (embora filtrado)
             }
         }
         // --- FIM ---
@@ -765,7 +825,7 @@
             }
             
             return upcomingTasks.map(task => {
-                // --- CORREÇÃO v2.3.5: Chama a função global ---
+                // --- CORREÇÃO v2.3.4: Chama a função global ---
                 const countdown = getTaskCountdown(task); 
                 const isCompleted = task.completed;
                 
@@ -1208,24 +1268,28 @@
                                 const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                                 const tasksForDay = allTasks.filter(task => task.date === dateStr);
                                 const isToday = dateStr === todayString;
+                                
+                                // --- LÓGICA DE COR DA BOLINHA (v2.3.5) ---
+                                let dotColor = 'bg-sky-500'; // Default (azul)
+                                const futureTasks = tasksForDay.filter(t => !t.completed);
+                                if (futureTasks.length > 0) {
+                                    // Verifica a mais urgente
+                                    const countdown = getTaskCountdown(futureTasks[0]);
+                                    if (countdown.color === 'rose') dotColor = 'bg-rose-500';
+                                    else if (countdown.color === 'orange') dotColor = 'bg-orange-500';
+                                    else if (countdown.color === 'emerald') dotColor = 'bg-emerald-500';
+                                }
+                                const allDone = tasksForDay.length > 0 && futureTasks.length === 0;
+                                if (allDone) dotColor = 'bg-emerald-500';
+                                // --- FIM DA LÓGICA DE COR ---
 
                                 return `
                                     <div data-action="view-day-tasks" data-date="${dateStr}" class="border-r border-b border-slate-200 dark:border-slate-700 h-24 md:h-28 p-1.5 overflow-y-auto relative hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer">
                                         <div class="font-semibold text-sm ${isToday ? 'bg-sky-600 text-white rounded-full w-6 h-6 flex items-center justify-center' : 'text-slate-700 dark:text-slate-300'}">${day}</div>
                                         <div class="mt-1 space-y-1">
-                                            ${tasksForDay.map(task => {
-                                                // --- CORREÇÃO v2.3.5: Lógica de cor da bolinha ---
-                                                let colorClass = 'bg-sky-500'; // Default
-                                                if (task.completed) {
-                                                    colorClass = 'bg-emerald-500';
-                                                } else {
-                                                    const countdown = getTaskCountdown(task);
-                                                    if (countdown.color === 'rose') colorClass = 'bg-rose-500';
-                                                    else if (countdown.color === 'orange') colorClass = 'bg-orange-500';
-                                                    else if (countdown.color === 'emerald') colorClass = 'bg-emerald-500';
-                                                }
-                                                return `<div class="w-full h-1.5 rounded ${colorClass}"></div>`;
-                                            }).join('')}
+                                            ${tasksForDay.map(task => `
+                                                <div class="w-full h-1.5 rounded ${task.completed ? 'bg-emerald-500' : dotColor}"></div>
+                                            `).join('')}
                                         </div>
                                     </div>
                                 `;
@@ -1236,6 +1300,9 @@
             `;
             return html;
         }
+        
+        // --- CALENDÁRIO FULLCALENDAR (REMOVIDO) ---
+        // function initializeFullCalendar() { ... }
         
         // --- PÁGINA DE OBJETIVOS (v2.2.2 - CORREÇÃO) ---
         function renderGoalStats() {
@@ -1874,13 +1941,13 @@
         // --- Funções Auxiliares (Modal de Confirmação) ---
         
         // --- FUNÇÃO DE CONTAGEM REGRESSIVA (v2.3.1 - Correção) ---
+        // *** ESTA É A FUNÇÃO CORRIGIDA ***
         function getTaskCountdown(task) {
             const now = new Date();
             
             const [year, month, day] = task.date.split('-').map(Number);
             let taskTime = [0, 0]; // Default 00:00
             
-            // --- CORREÇÃO AQUI ---
             // Verifica se task.time existe e não está vazio
             if (task.time && task.time.includes(':')) { 
                 taskTime = task.time.split(':').map(Number); 
@@ -2029,10 +2096,16 @@
                         <h1 id="header-title" class="text-2xl font-bold text-slate-900 dark:text-slate-100">Painel Principal</h1>
                     </div>
                     
-                    <!-- Botão de Configurações (novo) -->
-                    <button id="settings-button" data-action="open-settings" class="text-slate-600 dark:text-slate-300 hover:text-sky-600 dark:hover:text-sky-400 transition-colors">
-                        <i data-lucide="settings" class="w-7 h-7"></i>
-                    </button>
+                    <!-- LADO DIREITO (NOVO) -->
+                    <div class="flex items-center gap-3">
+                        <!-- NOVO ÍCONE DE RELÓGIO -->
+                        <i id="task-clock-icon" data-lucide="clock" class="w-6 h-6 hidden"></i> 
+                        
+                        <!-- Botão de Configurações (novo) -->
+                        <button id="settings-button" data-action="open-settings" class="text-slate-600 dark:text-slate-300 hover:text-sky-600 dark:hover:text-sky-400 transition-colors">
+                            <i data-lucide="settings" class="w-7 h-7"></i>
+                        </button>
+                    </div>
                 </div>
             </div>
         </header>
