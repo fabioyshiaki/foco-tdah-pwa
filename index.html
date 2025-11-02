@@ -70,7 +70,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "2.3.3 (Correção de Bug Crítico)";
+        const appVersion = "2.3.4 (Correção do Bug Crítico de Tarefas)";
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -209,7 +209,7 @@
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register(swUrl)
-                    .then(registration => console.log('Service Worker v2.3.3 registrado', registration.scope))
+                    .then(registration => console.log('Service Worker v2.3.4 registrado', registration.scope))
                     .catch(error => console.error('Falha no registro do Service Worker', error));
             });
         }
@@ -481,8 +481,13 @@
                 Object.values(window.myCharts).forEach(chart => chart.destroy());
                 window.myCharts = {};
             }
-            // CORREÇÃO v2.3.1: Não destrói mais o calendário aqui
-            
+            if (currentPage !== 'taskCalendar') {
+                if (window.myCalendar) {
+                    window.myCalendar.destroy();
+                    window.myCalendar = null;
+                }
+            }
+
             const appContainer = document.getElementById('app-container');
             const header = document.getElementById('main-header');
             const bottomNav = document.getElementById('bottom-nav');
@@ -737,48 +742,6 @@
                 `;
             }).join('');
         }
-        
-        // --- FUNÇÃO DE CONTAGEM REGRESSIVA ATUALIZADA (v2.3.1 - Correção de Bug) ---
-        function getTaskCountdown(task) {
-            const now = new Date();
-            
-            const [year, month, day] = task.date.split('-').map(Number);
-            let taskTime = [0, 0]; // Default 00:00
-            
-            // --- CORREÇÃO AQUI ---
-            // Verifica se task.time existe e não está vazio
-            if (task.time && task.time.includes(':')) { 
-                taskTime = task.time.split(':').map(Number); 
-            }
-            
-            const taskDate = new Date(year, month - 1, day, taskTime[0], taskTime[1]);
-            
-            const diffMs = taskDate.getTime() - now.getTime();
-            
-            // Se já passou há mais de um dia, apenas "Atrasada"
-            if (diffMs < -86400000) { // -24 horas
-                 return { text: "Atrasada", color: "slate" };
-            }
-            // Se passou hoje
-            if (diffMs < 0) {
-                 return { text: "Atrasada", color: "rose" };
-            }
-            
-            const diffHours = Math.ceil(diffMs / (1000 * 60 * 60)); // Horas restantes
-            
-            // LÓGICA DE 12 HORAS
-            if (diffHours <= 12) {
-                return { text: `${diffHours} ${diffHours === 1 ? 'hora' : 'horas'}`, color: "rose" };
-            }
-            
-            // LÓGICA DE DIAS
-            // Recalcula a diferença em dias a partir da *meia-noite de hoje*
-            const diffDays = Math.ceil((new Date(year, month - 1, day).getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24));
-            
-            if (diffDays === 1) return { text: "1 dia", color: "rose" };
-            if (diffDays <= 4) return { text: `${diffDays} dias`, color: "orange" };
-            return { text: `${diffDays} dias`, color: "emerald" };
-        }
 
         function renderUpcomingTasks() {
             const today = new Date();
@@ -806,11 +769,11 @@
             }
             
             return upcomingTasks.map(task => {
-            // CORREÇÃO v2.3.3: A função getTaskCountdown foi movida para o escopo global (ver Funções Auxiliares)
-            const countdown = getTaskCountdown(task); // <-- USA A NOVA FUNÇÃO GLOBAL
-            const isCompleted = task.completed;
-            
-            let colorClass = '';
+                // --- CORREÇÃO v2.3.4: Chama a função global ---
+                const countdown = getTaskCountdown(task); 
+                const isCompleted = task.completed;
+                
+                let colorClass = '';
                 if (isCompleted) {
                      colorClass = 'bg-slate-100 text-slate-400 border-slate-200 dark:bg-slate-600 dark:text-slate-400 dark:border-slate-500';
                 } else if (countdown.color === 'rose') {
@@ -1213,8 +1176,6 @@
 
         // --- CALENDÁRIO SIMPLES (v2.3.0) ---
         function renderTaskCalendar() {
-            // CORREÇÃO v2.3.1: FullCalendar não precisa desta função, 
-            // mas o calendário simples sim.
             const year = currentCalendarDate.getFullYear();
             const month = currentCalendarDate.getMonth(); // 0-11
             const monthName = currentCalendarDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
@@ -1267,11 +1228,9 @@
                     </div>
                 </div>
             `;
+            // NÃO chama o initializeFullCalendar aqui
             return html;
         }
-        
-        // --- CALENDÁRIO FULLCALENDAR (BUGADO E REMOVIDO) ---
-        // function initializeFullCalendar() { ... }
         
         // --- PÁGINA DE OBJETIVOS (v2.2.2 - CORREÇÃO) ---
         function renderGoalStats() {
@@ -1532,6 +1491,8 @@
                 loginBtn.addEventListener('click', handleGoogleLogin);
                 console.log("Listener de login anexado diretamente ao botão.");
              } else {
+                // Isso pode acontecer se o render() for chamado
+                // enquanto o authState ainda é 'LOGADO' ou 'VERIFICANDO'
                 console.warn("Botão de login não encontrado para anexar listener.");
              }
         }
@@ -1907,13 +1868,14 @@
         
         // --- Funções Auxiliares (Modal de Confirmação) ---
         
-        // --- FUNÇÃO DE CONTAGEM REGRESSIVA (v2.3.3 - CORRIGIDA E MOVIDA) ---
+        // --- FUNÇÃO DE CONTAGEM REGRESSIVA (v2.3.1 - Correção) ---
         function getTaskCountdown(task) {
             const now = new Date();
             
             const [year, month, day] = task.date.split('-').map(Number);
             let taskTime = [0, 0]; // Default 00:00
             
+            // --- CORREÇÃO AQUI ---
             // Verifica se task.time existe e não está vazio
             if (task.time && task.time.includes(':')) { 
                 taskTime = task.time.split(':').map(Number); 
@@ -2091,6 +2053,4 @@
 
 </body>
 </html>
-
-
 
