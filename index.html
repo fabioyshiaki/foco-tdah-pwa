@@ -12,11 +12,6 @@
     <script>
         tailwind.config = {
           darkMode: 'class', // Habilita o modo escuro baseado em classe (no <html>)
-          theme: {
-            extend: {
-              // Você pode adicionar cores personalizadas aqui se quiser
-            }
-          }
         }
     </script>
     
@@ -72,7 +67,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "2.0.0 (Gráficos e Diário v2)";
+        const appVersion = "2.1.0 (Mobile-First Redesign)";
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -105,8 +100,8 @@
 
         // Estado da UI
         let authState = 'VERIFICANDO'; // 'VERIFICANDO', 'LOGADO', 'DESLOGADO'
-        let currentPage = 'main'; 
-        let currentModal = null; 
+        let currentPage = 'main'; // main, journalView, taskCalendar, progress
+        let currentModal = null; // addRoutine, addTask, addGoal, settings
         let currentCalendarDate = new Date();
         let currentTheme = 'light'; // 'light' ou 'dark'
         
@@ -153,7 +148,7 @@
                 '/',
                 'https://cdn.tailwindcss.com',
                 'https://unpkg.com/lucide@0.395.0/dist/umd/lucide.min.js',
-                'https://cdn.jsdelivr.net/npm/chart.js', // <-- NOVO: Cachear Chart.js
+                'https://cdn.jsdelivr.net/npm/chart.js',
                 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js',
                 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js',
                 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js',
@@ -207,7 +202,7 @@
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register(swUrl)
-                    .then(registration => console.log('Service Worker v2.0.0 registrado', registration.scope))
+                    .then(registration => console.log('Service Worker v2.1.0 registrado', registration.scope))
                     .catch(error => console.error('Falha no registro do Service Worker', error));
             });
         }
@@ -318,7 +313,7 @@
                     setLoggedInState(result.user);
                 } else {
                     console.warn('Popup fechado sem login.');
-                    setLoggedOutState(null);
+                    // Não faz nada, continua deslogado
                 }
             } catch (error) {
                 console.error("Erro ao logar com Popup", error.code, error.message);
@@ -364,32 +359,33 @@
                 localStorage.theme = 'light';
             }
             updateChartColors();
-            renderThemeToggle(); // Atualiza o botão
-            renderAllCharts(); // Redesenha os gráficos com as novas cores
+            renderThemeToggle(); // Atualiza o botão no modal de settings
+            if (currentPage === 'progress') {
+                renderAllCharts(); // Redesenha os gráficos com as novas cores
+            }
         }
         
         function updateChartColors() {
              if (typeof Chart === 'undefined') return;
              const isDark = document.documentElement.classList.contains('dark');
              // Cores do Tailwind
-             // light: text-slate-500 (grid), text-slate-800 (ticks)
-             // dark: text-slate-400 (grid), text-slate-100 (ticks)
-             Chart.defaults.color = isDark ? '#94a3b8' : '#334155';
-             Chart.defaults.borderColor = isDark ? '#334155' : '#e2e8f0';
+             Chart.defaults.color = isDark ? '#94a3b8' : '#334155'; // slate-400 / slate-700
+             Chart.defaults.borderColor = isDark ? '#334155' : '#e2e8f0'; // slate-700 / slate-200
         }
 
-        function renderThemeToggle() {
-            const knob = document.getElementById('theme-toggle-knob');
-            const button = document.getElementById('theme-toggle-button');
-            if (knob && button) {
-                if (currentTheme === 'dark') {
-                    button.classList.replace('bg-slate-600', 'bg-sky-500');
-                    knob.classList.add('translate-x-5');
-                } else {
-                    button.classList.replace('bg-sky-500', 'bg-slate-600');
-                    knob.classList.remove('translate-x-5');
-                }
-            }
+        function renderThemeToggle(containerId = 'theme-toggle-container') {
+             const container = document.getElementById(containerId);
+             if (!container) return;
+             
+             const isDark = document.documentElement.classList.contains('dark');
+             container.innerHTML = `
+                <div class="flex justify-between items-center w-full">
+                    <span class="text-lg text-slate-700 dark:text-slate-200">Modo Escuro</span>
+                    <button id="theme-toggle-button" data-action="toggle-theme" class="relative inline-flex items-center h-6 rounded-full w-11 transition-colors ${isDark ? 'bg-sky-500' : 'bg-slate-600'}">
+                        <span id="theme-toggle-knob" class="inline-block w-4 h-4 transform bg-white rounded-full transition-transform ${isDark ? 'translate-x-5' : 'translate-x-1'}"></span>
+                    </button>
+                </div>
+             `;
         }
         // --- FIM FUNÇÕES DE TEMA ---
 
@@ -419,10 +415,10 @@
             }, (error) => console.error("Erro ao carregar rotinas:", error)); 
             unsubscribes.push(unsubRoutines); 
 
+            // ... (demais listeners de dados) ...
             const historyQuery = collection(db, `${dbPathPrefix}/routineHistory`);
             const unsubHistory = onSnapshot(historyQuery, (snapshot) => {
                 routineHistory = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                console.log("Histórico de rotinas carregado:", routineHistory.length);
                 if (auth.currentUser) render();
             }, (error) => console.error("Erro ao carregar histórico:", error));
             unsubscribes.push(unsubHistory);
@@ -430,7 +426,6 @@
             const journalQuery = collection(db, `${dbPathPrefix}/journalEntries`);
             const unsubJournal = onSnapshot(journalQuery, (snapshot) => {
                 journalEntries = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                console.log("Entradas do diário carregadas:", journalEntries.length);
                 if (auth.currentUser) render();
             }, (error) => console.error("Erro ao carregar diário:", error));
             unsubscribes.push(unsubJournal);
@@ -438,7 +433,6 @@
             const tasksQuery = collection(db, `${dbPathPrefix}/tasks`);
             const unsubTasks = onSnapshot(tasksQuery, (snapshot) => {
                 allTasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                console.log("Tarefas carregadas:", allTasks.length);
                 if (auth.currentUser) render();
             }, (error) => console.error("Erro ao carregar tarefas:", error));
             unsubscribes.push(unsubTasks);
@@ -446,7 +440,6 @@
             const goalsQuery = collection(db, `${dbPathPrefix}/goals`);
             const unsubGoals = onSnapshot(goalsQuery, (snapshot) => {
                 allGoals = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                console.log("Objetivos carregados:", allGoals.length);
                 if (auth.currentUser) render();
             }, (error) => console.error("Erro ao carregar objetivos:", error));
             unsubscribes.push(unsubGoals);
@@ -457,18 +450,16 @@
         function render() {
             const appContainer = document.getElementById('app-container');
             const header = document.getElementById('main-header');
-            const sidebar = document.getElementById('menu-sidebar');
-            const menuButton = document.getElementById('menu-button');
+            const bottomNav = document.getElementById('bottom-nav');
             
-            if (!appContainer || !header || !sidebar || !menuButton) return;
+            if (!appContainer || !header || !bottomNav) return;
             
             // --- LÓGICA DE RENDERIZAÇÃO ATUALIZADA ---
             switch(authState) {
                 case 'VERIFICANDO':
                     // Mostra spinner
                     header.classList.add('hidden');
-                    sidebar.classList.add('hidden');
-                    menuButton.classList.add('hidden');
+                    bottomNav.classList.add('hidden');
                     appContainer.innerHTML = `
                         <div class="flex flex-col items-center justify-center min-h-[70vh] p-8 text-center">
                             <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-sky-500"></div>
@@ -479,67 +470,43 @@
                 case 'DESLOGADO':
                     // Mostra tela de login
                     header.classList.add('hidden');
-                    sidebar.classList.add('hidden');
-                    menuButton.classList.add('hidden');
+                    bottomNav.classList.add('hidden');
                     appContainer.innerHTML = renderLoginScreen();
                     break;
                 
                 case 'LOGADO':
                     // Mostra o app normal
                     header.classList.remove('hidden');
-                    sidebar.classList.remove('hidden'); 
-                    menuButton.classList.remove('hidden');
+                    bottomNav.classList.remove('hidden'); 
                 
-                    document.getElementById('header-date').innerText = todayFullDate;
-
+                    const headerTitle = document.getElementById('header-title');
+                    
                     switch (currentPage) {
                         case 'main':
+                            if(headerTitle) headerTitle.innerText = "Painel Principal";
                             appContainer.innerHTML = renderMainDashboard();
                             renderTodayJournalEntry(); 
                             break;
-                        case 'routineStats':
-                            appContainer.innerHTML = renderRoutineStats();
-                            // Renderiza os gráficos DEPOIS que o HTML (canvas) está na página
-                            renderAllCharts();
-                            break;
                         case 'journalView':
+                            if(headerTitle) headerTitle.innerText = "Meu Diário";
                             appContainer.innerHTML = renderJournalView();
                             break;
                         case 'taskCalendar':
+                            if(headerTitle) headerTitle.innerText = "Calendário";
                             appContainer.innerHTML = renderTaskCalendar();
                             break;
-                        case 'goalView':
-                            appContainer.innerHTML = renderGoalView();
+                        case 'progress':
+                            if(headerTitle) headerTitle.innerText = "Meu Progresso";
+                            appContainer.innerHTML = renderProgressPage();
+                            // Renderiza os gráficos DEPOIS que o HTML (canvas) está na página
+                            renderAllCharts();
                             break;
                     }
+                    renderBottomNav(); // Atualiza o estado ativo da tab bar
                     break;
             }
             // --- FIM DA LÓGICA CONDICIONAL ---
             
-            // Adiciona a versão e o status de login ao menu
-            const versionEl = document.getElementById('version-number');
-            const authButtonEl = document.getElementById('auth-button-container');
-            const authUserEl = document.getElementById('auth-user-display');
-            
-            if (versionEl) versionEl.innerText = `v${appVersion}`;
-            
-            if (authButtonEl && authUserEl) {
-                if (authState === 'LOGADO' && currentUser) {
-                     // Estado Logado
-                    authUserEl.innerText = `Usuário: ${currentUser.displayName || currentUser.email}`;
-                    authButtonEl.innerHTML = `
-                         <a href="#" data-action="auth-logout" class="flex items-center space-x-3 px-4 py-3 text-lg text-rose-400 hover:bg-slate-800 hover:text-rose-300 transition-colors duration-200 rounded-lg">
-                            <i data-lucide="log-out" class=""></i>
-                            <span>Sair (Logout)</span>
-                        </a>`;
-                } else {
-                     // Estado Deslogado ou Verificando
-                    authUserEl.innerText = "Deslogado";
-                    authButtonEl.innerHTML = ``; // Sem botão de login aqui
-                }
-            }
-
-            renderThemeToggle(); // Renderiza o botão do tema
             renderModal();
             
             if (typeof lucide !== 'undefined') {
@@ -587,9 +554,14 @@
             }
         
             return `
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 md:p-6">
-                    <!-- 1. Rotinas Diárias -->
-                    <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl">
+                <div class="p-4 flex flex-col gap-6">
+                    <!-- Data -->
+                    <div class="text-center">
+                        <p id="header-date" class="text-sm text-slate-500 dark:text-slate-400 font-medium">${todayFullDate}</p>
+                    </div>
+                
+                    <!-- 1. Rotinas Diárias (Layout de Coluna Única) -->
+                    <div class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-xl">
                         <div class="flex justify-between items-center mb-4">
                             <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100">Rotinas</h2>
                             <button data-action="open-modal" data-modal="addRoutine" class="text-sky-600 hover:text-sky-800 dark:hover:text-sky-400 p-1 rounded-full hover:bg-sky-100 dark:hover:bg-slate-700 transition-colors">
@@ -601,17 +573,8 @@
                         </div>
                     </div>
 
-                    <!-- 2. Diário -->
-                    <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl">
-                        <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100 mb-4">Diário de Hoje</h2>
-                        <textarea id="journal-textarea" class="w-full h-36 p-3 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 dark:placeholder-slate-400 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 transition-colors" placeholder="Como foi o seu dia?"></textarea>
-                        <button id="save-journal-btn" class="mt-4 w-full bg-sky-600 text-white text-lg font-bold py-3 px-4 rounded-lg hover:bg-sky-700 shadow-md hover:shadow-lg transition-all">
-                            Salvar Diário
-                        </button>
-                    </div>
-
-                    <!-- 3. Próximas Tarefas -->
-                    <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl">
+                    <!-- 2. Próximas Tarefas -->
+                    <div class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-xl">
                         <div class="flex justify-between items-center mb-4">
                             <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100">Próximas Tarefas</h2>
                             <button data-action="open-modal" data-modal="addTask" class="text-sky-600 hover:text-sky-800 dark:hover:text-sky-400 p-1 rounded-full hover:bg-sky-100 dark:hover:bg-slate-700 transition-colors">
@@ -623,8 +586,17 @@
                         </div>
                     </div>
 
+                    <!-- 3. Diário -->
+                    <div class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-xl">
+                        <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100 mb-4">Diário de Hoje</h2>
+                        <textarea id="journal-textarea" class="w-full h-36 p-3 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 dark:placeholder-slate-400 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 transition-colors" placeholder="Como foi o seu dia?"></textarea>
+                        <button id="save-journal-btn" class="mt-4 w-full bg-sky-600 text-white text-lg font-bold py-3 px-4 rounded-lg hover:bg-sky-700 shadow-md hover:shadow-lg transition-all">
+                            Salvar Diário
+                        </button>
+                    </div>
+
                     <!-- 4. Objetivos -->
-                    <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl">
+                    <div class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-xl">
                         <div class="flex justify-between items-center mb-4">
                             <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100">Objetivos</h2>
                             <button data-action="open-modal" data-modal="addGoal" class="text-sky-600 hover:text-sky-800 dark:hover:text-sky-400 p-1 rounded-full hover:bg-sky-100 dark:hover:bg-slate-700 transition-colors">
@@ -754,17 +726,27 @@
         }
 
         // --- Renderização das Páginas do Menu ---
+        
+        // --- PÁGINA DE PROGRESSO (v2.1.0) ---
+        function renderProgressPage() {
+            return `
+                <div class="p-4 flex flex-col gap-6">
+                    ${renderRoutineCharts()}
+                    ${renderGoalStats()}
+                </div>
+            `;
+        }
 
         // --- PÁGINA DE ESTATÍSTICAS COM GRÁFICOS (v2.0.0) ---
-        function renderRoutineStats() {
+        function renderRoutineCharts() {
             // Esta função agora apenas desenha os containers dos gráficos
             return `
-                <div class="p-6">
-                    <h2 class="text-4xl font-bold text-slate-800 dark:text-slate-100 mb-8">Estatísticas de Rotinas</h2>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-xl">
+                    <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100 mb-6">Estatísticas de Rotinas</h2>
+                    <div class="space-y-8">
                         
                         <!-- Gráfico de Hoje -->
-                        <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl">
+                        <div>
                             <h3 class="text-2xl font-semibold text-slate-700 dark:text-slate-200 mb-4">Hoje</h3>
                             <div class="h-64 flex items-center justify-center">
                                 <canvas id="todayChart"></canvas>
@@ -772,7 +754,7 @@
                         </div>
                         
                         <!-- Gráfico da Semana -->
-                        <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl">
+                        <div>
                              <h3 class="text-2xl font-semibold text-slate-700 dark:text-slate-200 mb-4">Últimos 7 Dias</h3>
                             <div class="h-64">
                                 <canvas id="weekChart"></canvas>
@@ -780,7 +762,7 @@
                         </div>
                         
                         <!-- Gráfico do Mês -->
-                        <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl">
+                        <div>
                              <h3 class="text-2xl font-semibold text-slate-700 dark:text-slate-200 mb-4">Últimas 4 Semanas</h3>
                             <div class="h-64">
                                 <canvas id="monthChart"></canvas>
@@ -788,7 +770,7 @@
                         </div>
                         
                         <!-- Gráfico do Ano -->
-                        <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl">
+                        <div>
                              <h3 class="text-2xl font-semibold text-slate-700 dark:text-slate-200 mb-4">Este Ano</h3>
                             <div class="h-64">
                                 <canvas id="yearChart"></canvas>
@@ -807,6 +789,10 @@
                  console.error("Chart.js não foi carregado.");
                  return;
             }
+            // Limpa gráficos antigos
+            Object.values(window.myCharts).forEach(chart => chart.destroy());
+            window.myCharts = {};
+            
             renderTodayChart();
             renderWeekChart();
             renderMonthChart();
@@ -822,8 +808,6 @@
             const total = allRoutines.length;
             const pending = total - completed;
 
-            if (window.myCharts.todayChart) window.myCharts.todayChart.destroy();
-            
             window.myCharts.todayChart = new Chart(ctx, {
                 type: 'doughnut',
                 data: {
@@ -832,7 +816,7 @@
                         data: [completed, pending < 0 ? 0 : pending],
                         backgroundColor: [
                             '#0ea5e9', // sky-500
-                            '#334155'  // slate-700
+                            document.documentElement.classList.contains('dark') ? '#334155' : '#e2e8f0' // slate-700 / slate-200
                         ],
                         borderColor: document.documentElement.classList.contains('dark') ? '#1e293b' : '#ffffff', // bg-slate-800 ou bg-white
                         borderWidth: 4
@@ -875,8 +859,6 @@
                 data.push(percentage);
             }
 
-            if (window.myCharts.weekChart) window.myCharts.weekChart.destroy();
-            
             window.myCharts.weekChart = new Chart(ctx, {
                 type: 'bar',
                 data: {
@@ -940,8 +922,6 @@
                 data.push(percentage);
             }
 
-            if (window.myCharts.monthChart) window.myCharts.monthChart.destroy();
-            
             window.myCharts.monthChart = new Chart(ctx, {
                 type: 'bar',
                 data: {
@@ -1008,8 +988,6 @@
                 return totalPossible > 0 ? (completedCount / totalPossible) * 100 : 0;
             });
 
-            if (window.myCharts.yearChart) window.myCharts.yearChart.destroy();
-            
             window.myCharts.yearChart = new Chart(ctx, {
                 type: 'bar',
                 data: {
@@ -1055,7 +1033,7 @@
 
             const sortedMonths = Object.keys(entriesByMonth).sort().reverse();
             
-            let html = `<div class="p-6"><h2 class="text-4xl font-bold text-slate-800 dark:text-slate-100 mb-8">Meu Diário</h2><div class="space-y-4">`;
+            let html = `<div class="p-4 flex flex-col gap-4">`;
 
             if (sortedMonths.length === 0) {
                  html += `<p class="text-slate-500 dark:text-slate-400 text-center mt-8 text-lg">Nenhuma entrada no diário ainda.</p>`;
@@ -1067,7 +1045,7 @@
                 
                 html += `<div class="bg-white dark:bg-slate-800 rounded-2xl shadow-xl overflow-hidden">
                             <button data-action="toggle-month" data-month-id="month-${monthKey}" class="w-full flex justify-between items-center p-6">
-                                <h3 class="text-3xl font-semibold text-sky-700 dark:text-sky-500 capitalize">${monthName}</h3>
+                                <h3 class="text-2xl font-semibold text-sky-700 dark:text-sky-500 capitalize">${monthName}</h3>
                                 <i data-lucide="chevron-down" class="text-slate-500 transition-transform"></i>
                             </button>
                             <div id="month-${monthKey}" class="hidden space-y-5 px-6 pb-6 pt-2 border-t border-slate-200 dark:border-slate-700">`;
@@ -1076,7 +1054,7 @@
                     const [y, m, d] = entry.id.split('-').map(Number);
                     const entryDate = new Date(y, m - 1, d).toLocaleDateString('pt-BR', { day: 'numeric', month: 'short', year: 'numeric' });
                     html += `
-                        <div class="border-b border-slate-200 dark:border-slate-700 pb-4">
+                        <div class="border-b border-slate-200 dark:border-slate-700 pb-4 last:border-b-0">
                             <p class="text-lg font-semibold text-slate-800 dark:text-slate-100">${entryDate}</p>
                             <p class="text-slate-600 dark:text-slate-300 whitespace-pre-wrap mt-1">${entry.text}</p>
                         </div>
@@ -1086,7 +1064,7 @@
                 html += `</div></div>`;
             });
 
-            html += `</div></div>`;
+            html += `</div>`;
             return html;
         }
 
@@ -1101,14 +1079,14 @@
             const daysOfWeek = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
             let html = `
-                <div class="p-4 md:p-6">
-                    <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-xl max-w-5xl mx-auto">
+                <div class="p-4">
+                    <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-xl max-w-5xl mx-auto overflow-hidden">
                         <!-- Header do Calendário -->
                         <div class="flex justify-between items-center p-6 border-b border-slate-200 dark:border-slate-700">
                             <button data-action="calendar-prev" class="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 dark:hover:text-slate-100 transition-colors">
                                 <i data-lucide="chevron-left" class="w-6 h-6"></i>
                             </button>
-                            <h2 class="text-3xl font-bold text-sky-700 dark:text-sky-500 capitalize">${monthName}</h2>
+                            <h2 class="text-2xl font-bold text-sky-700 dark:text-sky-500 capitalize">${monthName}</h2>
                             <button data-action="calendar-next" class="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 dark:hover:text-slate-100 transition-colors">
                                 <i data-lucide="chevron-right" class="w-6 h-6"></i>
                             </button>
@@ -1117,10 +1095,10 @@
                         <!-- Grid dos Dias -->
                         <div class="grid grid-cols-7">
                             <!-- Cabeçalho dos dias da semana -->
-                            ${daysOfWeek.map(day => `<div class="text-center font-semibold text-slate-500 dark:text-slate-400 p-4 border-b border-slate-200 dark:border-slate-700">${day}</div>`).join('')}
+                            ${daysOfWeek.map(day => `<div class="text-center font-semibold text-slate-500 dark:text-slate-400 p-2 border-b border-slate-200 dark:border-slate-700 text-sm">${day}</div>`).join('')}
                             
                             <!-- Dias em branco (início) -->
-                            ${Array(firstDayOfMonth).fill('').map(() => `<div class="border-r border-b border-slate-200 dark:border-slate-700 h-32"></div>`).join('')}
+                            ${Array(firstDayOfMonth).fill('').map(() => `<div class="border-r border-b border-slate-200 dark:border-slate-700 h-28"></div>`).join('')}
 
                             <!-- Dias do mês -->
                             ${Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
@@ -1129,9 +1107,9 @@
                                 const isToday = dateStr === todayString;
 
                                 return `
-                                    <div class="border-r border-b border-slate-200 dark:border-slate-700 h-32 p-2 overflow-y-auto relative">
-                                        <div class="font-semibold text-lg ${isToday ? 'bg-sky-600 text-white rounded-full w-8 h-8 flex items-center justify-center' : 'text-slate-700 dark:text-slate-300'}">${day}</div>
-                                        <div class="mt-2 space-y-1">
+                                    <div class="border-r border-b border-slate-200 dark:border-slate-700 h-28 p-1.5 overflow-y-auto relative">
+                                        <div class="font-semibold text-sm ${isToday ? 'bg-sky-600 text-white rounded-full w-6 h-6 flex items-center justify-center' : 'text-slate-700 dark:text-slate-300'}">${day}</div>
+                                        <div class="mt-1 space-y-1">
                                             ${tasksForDay.map(task => `
                                                 <div class="text-xs p-1 rounded font-medium ${task.completed ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-800 dark:text-emerald-200 line-through' : 'bg-sky-100 text-sky-800 dark:bg-sky-800 dark:text-sky-200'}">
                                                     ${task.name}
@@ -1148,36 +1126,60 @@
             return html;
         }
 
-        function renderGoalView() {
+        // --- PÁGINA DE OBJETIVOS (v2.1.0) ---
+        function renderGoalStats() {
             const activeGoals = allGoals.filter(goal => !goal.completed);
             const completedGoals = allGoals.filter(goal => goal.completed);
 
             return `
-                <div class="p-6">
-                    <h2 class="text-4xl font-bold text-slate-800 dark:text-slate-100 mb-8">Meus Objetivos</h2>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-                        <!-- Objetivos Não Concluídos -->
-                        <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl">
-                            <h3 class="text-3xl font-semibold text-slate-700 dark:text-slate-200 mb-5">Ativos</h3>
-                            <div class="space-y-4">
-                                ${activeGoals.length > 0 ? activeGoals.map(goal => `
-                                    <p class="text-xl text-slate-700 dark:text-slate-200 p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg">${goal.name}</p>
-                                `).join('') : `<p class="text-slate-500 dark:text-slate-400 text-lg">Nenhum objetivo ativo.</p>`}
-                            </div>
+                <div class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-xl">
+                    <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100 mb-6">Meus Objetivos</h2>
+                    
+                    <!-- Objetivos Ativos -->
+                    <div>
+                        <h3 class="text-2xl font-semibold text-slate-700 dark:text-slate-200 mb-4">Ativos</h3>
+                        <div class="space-y-4">
+                            ${activeGoals.length > 0 ? activeGoals.map(goal => `
+                                <p class="text-xl text-slate-700 dark:text-slate-200 p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg">${goal.name}</p>
+                            `).join('') : `<p class="text-slate-500 dark:text-slate-400 text-lg">Nenhum objetivo ativo.</p>`}
                         </div>
-                        
-                        <!-- Objetivos Concluídos -->
-                        <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl">
-                            <h3 class="text-3xl font-semibold text-slate-700 dark:text-slate-200 mb-5">Concluídos</h3>
-                            <div class="space-y-4">
-                                ${completedGoals.length > 0 ? completedGoals.map(goal => `
-                                    <p class="text-xl text-slate-400 dark:text-slate-500 line-through p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg">${goal.name}</p>
-                                `).join('') : `<p class="text-slate-500 dark:text-slate-400 text-lg">Nenhum objetivo concluído ainda.</p>`}
-                            </div>
+                    </div>
+                    
+                    <!-- Objetivos Concluídos -->
+                    <div class="mt-8">
+                        <h3 class="text-2xl font-semibold text-slate-700 dark:text-slate-200 mb-4">Concluídos</h3>
+                        <div class="space-y-4">
+                            ${completedGoals.length > 0 ? completedGoals.map(goal => `
+                                <p class="text-xl text-slate-400 dark:text-slate-500 line-through p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg">${goal.name}</p>
+                            `).join('') : `<p class="text-slate-500 dark:text-slate-400 text-lg">Nenhum objetivo concluído ainda.</p>`}
                         </div>
                     </div>
                 </div>
             `;
+        }
+        
+        // --- NOVO: Renderiza a Tab Bar ---
+        function renderBottomNav() {
+            const nav = document.getElementById('bottom-nav');
+            if (!nav) return;
+            
+            const tabs = [
+                { id: 'main', icon: 'layout-dashboard', label: 'Início' },
+                { id: 'journalView', icon: 'book-open', label: 'Diário' },
+                { id: 'taskCalendar', icon: 'calendar-days', label: 'Calendário' },
+                { id: 'progress', icon: 'pie-chart', label: 'Progresso' }
+            ];
+            
+            nav.innerHTML = tabs.map(tab => {
+                const isActive = currentPage === tab.id;
+                const activeClass = isActive ? 'text-sky-500 dark:text-sky-400' : 'text-slate-500 dark:text-slate-400';
+                return `
+                    <button data-action="nav-${tab.id}" class="flex flex-col items-center justify-center p-2 w-full ${activeClass} transition-colors">
+                        <i data-lucide="${tab.icon}" class="w-6 h-6"></i>
+                        <span class="text-xs font-semibold">${tab.label}</span>
+                    </button>
+                `;
+            }).join('');
         }
 
         // --- Renderização do Modal ---
@@ -1227,6 +1229,35 @@
                         </button>
                     `;
                     break;
+                // --- NOVO MODAL DE CONFIGURAÇÕES ---
+                case 'settings':
+                    modalTitle = 'Configurações';
+                    modalContent = `
+                        <div class="space-y-6">
+                            <!-- Status do Usuário -->
+                            <div>
+                                <p class="text-sm text-slate-500 dark:text-slate-400">Usuário Logado</p>
+                                <p class="text-lg font-semibold text-slate-800 dark:text-slate-100">${currentUser ? (currentUser.displayName || currentUser.email) : 'Deslogado'}</p>
+                            </div>
+                            
+                            <!-- Botão de Tema -->
+                            <div id="theme-toggle-container-modal">
+                                <!-- O botão de tema será renderizado aqui -->
+                            </div>
+                            
+                            <!-- Botão de Sair -->
+                            <div>
+                                <a href="#" data-action="auth-logout" class="flex items-center justify-center space-x-3 w-full bg-rose-600 text-white text-lg font-semibold py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition-all hover:bg-rose-700">
+                                    <i data-lucide="log-out" class="w-5 h-5"></i>
+                                    <span>Sair (Logout)</span>
+                                </a>
+                            </div>
+                            
+                            <!-- Versão do App -->
+                            <p class="text-center text-sm text-slate-400 dark:text-slate-500">Versão: ${appVersion}</p>
+                        </div>
+                    `;
+                    break;
             }
 
             modalContainer.innerHTML = `
@@ -1245,6 +1276,12 @@
                     </div>
                 </div>
             `;
+            
+            // Renderiza o botão de tema *dentro* do modal
+            if (currentModal === 'settings') {
+                renderThemeToggle('theme-toggle-container-modal');
+            }
+            
             if (typeof lucide !== 'undefined') {
                 lucide.createIcons();
             }
@@ -1268,6 +1305,7 @@
                 
                 // Ação de Logout
                 if (action === 'auth-logout') {
+                    currentModal = null; // Fecha o modal de settings
                     handleLogout();
                     return;
                 }
@@ -1288,20 +1326,16 @@
                     return;
                 }
 
-                // Ações do Menu
-                if (action === 'open-menu') {
-                    document.getElementById('menu-sidebar').classList.remove('-translate-x-full');
-                    document.getElementById('menu-overlay').classList.remove('hidden');
-                }
-                if (action === 'close-menu') {
-                    document.getElementById('menu-sidebar').classList.add('-translate-x-full');
-                    document.getElementById('menu-overlay').classList.add('hidden');
-                }
+                // Ações do Menu (agora Tab Bar)
                 if (action.startsWith('nav-')) {
                     currentPage = action.split('-')[1];
-                    document.getElementById('menu-sidebar').classList.add('-translate-x-full');
-                    document.getElementById('menu-overlay').classList.add('hidden');
-                    render();
+                    render(); // Renderiza a nova página e atualiza a tab bar
+                }
+                
+                // Ação do novo botão de Configurações
+                if (action === 'open-settings') {
+                    currentModal = 'settings';
+                    renderModal();
                 }
 
                 // Ações do Modal
@@ -1632,78 +1666,29 @@
 </head>
 <body class="antialiased font-sans bg-slate-100 dark:bg-slate-900">
 
-    <!-- Menu Lateral (Sidebar) -->
-    <div id="menu-overlay" data-action="close-menu" class="fixed inset-0 bg-black bg-opacity-60 z-10 hidden transition-opacity"></div>
-    <div id="menu-sidebar" class="fixed top-0 left-0 w-72 h-full bg-slate-900 text-slate-200 z-20 shadow-xl transform -translate-x-full transition-transform duration-300 ease-in-out">
-        <div class="p-6">
-            <h2 class="text-3xl font-bold text-sky-400">Foco TDAH</h2>
-            <p class="text-slate-400 text-sm">Seu assistente</p>
-        </div>
-        <nav class="mt-6 flex flex-col h-[calc(100%-120px)]"> <!-- Ajuste de altura -->
-            <div class="flex-grow"> <!-- Itens do menu -->
-                <a href="#" data-action="nav-main" class="flex items-center space-x-3 px-6 py-4 text-lg text-slate-200 hover:bg-slate-800 hover:text-white transition-colors duration-200">
-                    <i data-lucide="layout-dashboard" class="text-slate-400"></i>
-                    <span>Painel Principal</span>
-                </a>
-                <a href="#" data-action="nav-routineStats" class="flex items-center space-x-3 px-6 py-4 text-lg text-slate-200 hover:bg-slate-800 hover:text-white transition-colors duration-200">
-                    <i data-lucide="pie-chart" class="text-slate-400"></i>
-                    <span>Estatísticas (Rotinas)</span>
-                </a>
-                <a href="#" data-action="nav-journalView" class="flex items-center space-x-3 px-6 py-4 text-lg text-slate-200 hover:bg-slate-800 hover:text-white transition-colors duration-200">
-                    <i data-lucide="book-open" class="text-slate-400"></i>
-                    <span>Ver Diário</span>
-                </a>
-                <a href="#" data-action="nav-taskCalendar" class="flex items-center space-x-3 px-6 py-4 text-lg text-slate-200 hover:bg-slate-800 hover:text-white transition-colors duration-200">
-                    <i data-lucide="calendar-days" class="text-slate-400"></i>
-                    <span>Calendário (Tarefas)</span>
-                </a>
-                <a href="#" data-action="nav-goalView" class="flex items-center space-x-3 px-6 py-4 text-lg text-slate-200 hover:bg-slate-800 hover:text-white transition-colors duration-200">
-                    <i data-lucide="target" class="text-slate-400"></i>
-                    <span>Ver Objetivos</span>
-                </a>
-            </div>
-            <!-- Informações de Versão e Login/Logout -->
-            <div class="p-4 border-t border-slate-700">
-                <!-- Botão de Tema -->
-                <div class="flex justify-between items-center px-4 py-3 mb-2">
-                    <span class="text-lg text-slate-200">Modo Escuro</span>
-                    <button id="theme-toggle-button" data-action="toggle-theme" class="relative inline-flex items-center h-6 rounded-full w-11 transition-colors bg-slate-600">
-                        <span id="theme-toggle-knob" class="inline-block w-4 h-4 transform bg-white rounded-full transition-transform translate-x-1"></span>
-                    </button>
-                </div>
-                
-                 <div id="auth-user-display" class="px-4 py-2 text-sm text-slate-400">Carregando...</div>
-                 <div id="auth-button-container">
-                    <!-- O botão de Login/Logout é renderizado aqui -->
-                 </div>
-                 <div class="px-4 py-2 text-xs text-slate-500" id="version-number">v...</div>
-            </div>
-        </nav>
-    </div>
-
     <!-- Conteúdo Principal -->
     <div class="min-h-screen">
         <!-- Header Principal -->
-        <header id="main-header" class="bg-white dark:bg-slate-800 shadow-md sticky top-0 z-0 border-b border-slate-200 dark:border-slate-700">
+        <header id="main-header" class="bg-white dark:bg-slate-800 shadow-md sticky top-0 z-10 border-b border-slate-200 dark:border-slate-700">
             <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div class="flex justify-between items-center h-20">
-                    <!-- Botão Menu -->
-                    <button id="menu-button" data-action="open-menu" class="text-slate-600 dark:text-slate-300 hover:text-sky-600 transition-colors">
-                        <i data-lucide="menu" class="w-8 h-8"></i>
-                    </button>
-                    <!-- Data -->
+                    <!-- Título (agora à esquerda) -->
                     <div class="text-center">
-                        <h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">Painel Principal</h1>
-                        <p id="header-date" class="text-sm text-slate-500 dark:text-slate-400 font-medium"></p>
+                        <h1 id="header-title" class="text-2xl font-bold text-slate-900 dark:text-slate-100">Painel Principal</h1>
                     </div>
-                    <!-- Espaçador (ou ícone de perfil) -->
-                    <div class="w-8"></div>
+                    
+                    <!-- Botão de Configurações (novo) -->
+                    <button id="settings-button" data-action="open-settings" class="text-slate-600 dark:text-slate-300 hover:text-sky-600 dark:hover:text-sky-400 transition-colors">
+                        <i data-lucide="settings" class="w-7 h-7"></i>
+                    </button>
                 </div>
             </div>
         </header>
 
         <!-- Container da Página -->
+        <!-- pb-24 = padding-bottom para deixar espaço para a tab bar -->
         <main id="app-container" class="pb-24">
+            <!-- O conteúdo da página é renderizado aqui pelo JavaScript -->
             <!-- Loading Spinner inicial -->
              <div class="flex justify-center items-center h-64">
                 <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-sky-500"></div>
@@ -1715,6 +1700,11 @@
     <div id="modal-container">
         <!-- O modal é renderizado aqui pelo JavaScript -->
     </div>
+    
+    <!-- NOVA BARRA DE NAVEGAÇÃO INFERIOR (TAB BAR) -->
+    <nav id="bottom-nav" class="fixed bottom-0 left-0 right-0 h-20 bg-white dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 flex justify-around items-center shadow-lg z-10">
+         <!-- As abas são renderizadas aqui pelo JavaScript (renderBottomNav) -->
+    </nav>
 
 </body>
 </html>
