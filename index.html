@@ -48,7 +48,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "1.5.0"; // Modo Depuração de Erro
+        const appVersion = "1.5.1"; // Forçar atualização de cache
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -188,7 +188,7 @@
             render(); // Renderiza o estado inicial (loading spinner)
         });
 
-        // --- LÓGICA DE LOGIN ATUALIZADA (v1.5.0) ---
+        // --- LÓGICA DE LOGIN ATUALIZADA (v1.5.1) ---
         function setLoggedInState(user) {
             console.log("...setLoggedInState chamado com:", user ? user.email : "null");
             currentUser = user; 
@@ -488,7 +488,7 @@
              // Mostra a mensagem de erro, se houver
              let errorMessage = '';
              if (authError) {
-                 console.error("RENDERIZANDO ERRO:", authError.code);
+                 console.error("RENDERIZANDO ERRO:", authError.code, authError.message);
                  if (authError.code === 'auth/unauthorized-domain') {
                      errorMessage = "ERRO: O domínio `fabioyshiaki.github.io` não está na lista de 'Domínios autorizados' no seu painel do Firebase. Siga o Passo 3 do guia.";
                  } else if (authError.code === 'auth/operation-not-allowed') {
