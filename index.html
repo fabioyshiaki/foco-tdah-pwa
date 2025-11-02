@@ -36,7 +36,8 @@
     <!-- Chart.js (Para os gráficos) -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
-    <!-- FullCalendar FOI REMOVIDO -->
+    <!-- FullCalendar (Para Calendário Avançado) -->
+    <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.14/index.global.min.js'></script>
     
     <!-- Firebase SDKs -->
     <script type="module">
@@ -69,7 +70,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "2.3.0 (Alertas & Calendário Simples)";
+        const appVersion = "2.2.3 (Correção de Bugs Críticos)";
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -83,8 +84,9 @@
         };
         // ----------------------------------------------------
         
-        // Objeto global para guardar instâncias dos gráficos
+        // Objeto global para guardar instâncias dos gráficos e calendário
         window.myCharts = {};
+        window.myCalendar = null;
         
         let db, auth, userId, appId;
         let dbPathPrefix = '';
@@ -153,7 +155,7 @@
                 'https://cdn.tailwindcss.com',
                 'https://unpkg.com/lucide@0.395.0/dist/umd/lucide.min.js',
                 'https://cdn.jsdelivr.net/npm/chart.js', 
-                // FullCalendar removido
+                'https://cdn.jsdelivr.net/npm/fullcalendar@6.1.14/index.global.min.js', 
                 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js',
                 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js',
                 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js',
@@ -207,7 +209,7 @@
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register(swUrl)
-                    .then(registration => console.log('Service Worker v2.3.0 registrado', registration.scope))
+                    .then(registration => console.log('Service Worker v2.2.3 registrado', registration.scope))
                     .catch(error => console.error('Falha no registro do Service Worker', error));
             });
         }
@@ -224,6 +226,13 @@
             initializeAppFirebase();
             setupEventListeners();
             render(); // Renderiza o estado inicial (loading spinner)
+            
+            // CORREÇÃO: Chama o Lucide aqui
+            if (typeof lucide !== 'undefined') {
+                lucide.createIcons();
+            } else {
+                console.warn("Lucide não carregou a tempo no DOMContentLoaded");
+            }
         });
 
         // --- LÓGICA DE LOGIN ---
@@ -240,6 +249,10 @@
             
             loadAllData();
             render();
+            // CORREÇÃO: Chama o Lucide aqui
+            setTimeout(() => {
+                if (typeof lucide !== 'undefined') lucide.createIcons();
+            }, 50);
         }
         
         function setLoggedOutState(error) {
@@ -252,6 +265,10 @@
             unsubscribes.forEach(unsub => unsub());
             unsubscribes = [];
             render();
+            // CORREÇÃO: Chama o Lucide aqui
+            setTimeout(() => {
+                if (typeof lucide !== 'undefined') lucide.createIcons();
+            }, 50);
         }
 
         async function initializeAppFirebase() {
@@ -369,6 +386,10 @@
             if (currentPage === 'progress') {
                 renderAllCharts(); // Redesenha os gráficos com as novas cores
             }
+            if (currentPage === 'taskCalendar') {
+                 // Recria o calendário para aplicar o tema
+                 initializeFullCalendar();
+            }
         }
         
         function updateChartColors() {
@@ -436,7 +457,12 @@
             const tasksQuery = collection(db, `${dbPathPrefix}/tasks`);
             const unsubTasks = onSnapshot(tasksQuery, (snapshot) => {
                 allTasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                console.log("Tarefas carregadas:", allTasks.length);
                 if (auth.currentUser) render();
+                
+                if (currentPage === 'taskCalendar' && window.myCalendar) {
+                    initializeFullCalendar(); // Recarrega os eventos
+                }
             }, (error) => console.error("Erro ao carregar tarefas:", error));
             unsubscribes.push(unsubTasks);
 
@@ -459,10 +485,16 @@
         // --- Funções de Renderização (UI) ---
 
         function render() {
-            // Destrói gráficos antigos antes de mudar de página
+            // Destrói gráficos e calendários antigos antes de mudar de página
             if (currentPage !== 'progress') {
                 Object.values(window.myCharts).forEach(chart => chart.destroy());
                 window.myCharts = {};
+            }
+            if (currentPage !== 'taskCalendar') {
+                if (window.myCalendar) {
+                    window.myCalendar.destroy();
+                    window.myCalendar = null;
+                }
             }
 
             const appContainer = document.getElementById('app-container');
@@ -511,6 +543,9 @@
                         case 'taskCalendar':
                             if(headerTitle) headerTitle.innerText = "Calendário";
                             appContainer.innerHTML = renderTaskCalendar();
+                            // Renderiza o calendário DEPOIS que o HTML (canvas) está na página
+                            // Usamos setTimeout para garantir que o DOM foi pintado
+                            setTimeout(initializeFullCalendar, 0); 
                             break;
                         case 'progress':
                             if(headerTitle) headerTitle.innerText = "Meu Progresso";
@@ -527,8 +562,15 @@
             
             renderModal();
             
+            // CORREÇÃO (v2.2.3): Chama o Lucide aqui no final de CADA render()
             if (typeof lucide !== 'undefined') {
                 lucide.createIcons();
+            } else {
+                 console.warn("Lucide não definido no momento do render()");
+                 // Tenta de novo em 50ms
+                 setTimeout(() => {
+                     if (typeof lucide !== 'undefined') lucide.createIcons();
+                 }, 50);
             }
         }
         
@@ -1173,7 +1215,7 @@
                             ${daysOfWeek.map(day => `<div class="text-center font-semibold text-slate-500 dark:text-slate-400 p-2 border-b border-slate-200 dark:border-slate-700 text-sm">${day}</div>`).join('')}
                             
                             <!-- Dias em branco (início) -->
-                            ${Array(firstDayOfMonth).fill('').map(() => `<div class="border-r border-b border-slate-200 dark:border-slate-700 h-28"></div>`).join('')}
+                            ${Array(firstDayOfMonth).fill('').map(() => `<div class="border-r border-b border-slate-200 dark:border-slate-700 h-24 md:h-28"></div>`).join('')}
 
                             <!-- Dias do mês -->
                             ${Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
@@ -1182,11 +1224,11 @@
                                 const isToday = dateStr === todayString;
 
                                 return `
-                                    <div data-action="view-day-tasks" data-date="${dateStr}" class="border-r border-b border-slate-200 dark:border-slate-700 h-28 p-1.5 overflow-y-auto relative hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer">
+                                    <div data-action="view-day-tasks" data-date="${dateStr}" class="border-r border-b border-slate-200 dark:border-slate-700 h-24 md:h-28 p-1.5 overflow-y-auto relative hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer">
                                         <div class="font-semibold text-sm ${isToday ? 'bg-sky-600 text-white rounded-full w-6 h-6 flex items-center justify-center' : 'text-slate-700 dark:text-slate-300'}">${day}</div>
                                         <div class="mt-1 space-y-1">
                                             ${tasksForDay.map(task => `
-                                                <div class="w-full p-1 rounded ${task.completed ? 'bg-emerald-500' : 'bg-sky-500'}"></div>
+                                                <div class="w-full h-1.5 rounded ${task.completed ? 'bg-emerald-500' : 'bg-sky-500'}"></div>
                                             `).join('')}
                                         </div>
                                     </div>
@@ -1301,7 +1343,7 @@
                         <input type="text" id="task-name" class="mt-2 block w-full border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 rounded-lg p-3 text-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500" placeholder="Ex: Consulta médica">
                         
                         <label for="task-date" class="block text-lg font-medium text-slate-700 dark:text-slate-200 mt-4">Data</label>
-                        <input type="date" id="task-date" value="${todayString}" class="mt-2 block w-full border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 rounded-lg p-3 text-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500">
+                        <input type="date" id="task-date" value="${selectedDate || todayString}" class="mt-2 block w-full border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 rounded-lg p-3 text-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500">
                         
                         <button id="save-task-btn" class="mt-6 w-full bg-sky-600 text-white font-bold text-lg py-3 px-4 rounded-lg hover:bg-sky-700 shadow-md hover:shadow-lg transition-all">
                             Salvar Tarefa
@@ -1395,38 +1437,12 @@
                              `;
                          }).join('<div class="h-2"></div>'); // Espaçador
                     }
-                    break;
-                case 'taskDetails':
-                    if (!selectedTask) {
-                        currentModal = null;
-                        return;
-                    }
-                    modalTitle = 'Detalhes da Tarefa';
-                    const isCompletedTask = selectedTask.completed;
-                    const toggleButtonText = isCompletedTask ? 'Marcar como Pendente' : 'Concluir Tarefa';
-                    const toggleButtonIcon = isCompletedTask ? 'x-circle' : 'check-circle';
-                    const toggleButtonClass = isCompletedTask ? 'bg-slate-500 hover:bg-slate-600' : 'bg-emerald-600 hover:bg-emerald-700';
-                    
-                    modalContent = `
-                        <div class="space-y-6">
-                            <h4 class="text-2xl font-semibold text-slate-800 dark:text-slate-100">${selectedTask.name}</h4>
-                            <p class="text-lg text-slate-600 dark:text-slate-300 flex items-center">
-                                <i data-lucide="calendar" class="inline-block w-5 h-5 mr-2"></i>
-                                ${new Date(selectedTask.date + 'T00:00:00').toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' })}
-                            </p>
-                            
-                            <!-- Botão de (Des)Marcar -->
-                            <button data-action="toggle-task" data-id="${selectedTask.id}" data-completed="${isCompletedTask}" class="${toggleButtonClass} flex items-center justify-center space-x-3 w-full text-white text-lg font-semibold py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition-all">
-                                <i data-lucide="${toggleButtonIcon}" class="w-5 h-5"></i>
-                                <span>${toggleButtonText}</span>
-                            </button>
-                            
-                            <!-- Botão de Excluir -->
-                            <button data-action="delete-task" data-id="${selectedTask.id}" class="flex items-center justify-center space-x-3 w-full bg-rose-600 text-white text-lg font-semibold py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition-all hover:bg-rose-700">
-                                <i data-lucide="trash-2" class="w-5 h-5"></i>
-                                <span>Excluir Tarefa</span>
-                            </button>
-                        </div>
+                    // Adiciona botão para criar nova tarefa NESSE dia
+                    modalContent += `
+                        <button data-action="add-task-for-date" class="mt-6 w-full flex items-center justify-center space-x-2 bg-sky-600 text-white font-bold text-lg py-3 px-4 rounded-lg hover:bg-sky-700 shadow-md hover:shadow-lg transition-all">
+                            <i data-lucide="plus" class="w-6 h-6"></i>
+                            <span>Nova Tarefa</span>
+                        </button>
                     `;
                     break;
             }
@@ -1523,6 +1539,13 @@
                 if (action === 'view-day-tasks') {
                     selectedDate = target.dataset.date;
                     currentModal = 'taskDayView';
+                    renderModal();
+                }
+                
+                // NOVO: Botão de adicionar tarefa de dentro do modal do dia
+                if (action === 'add-task-for-date') {
+                    currentModal = 'addTask'; // Reusa o modal de add tarefa
+                    // selectedDate já está setado
                     renderModal();
                 }
 
@@ -1700,7 +1723,11 @@
         
         async function handleAddTask() {
             const name = document.getElementById('task-name').value.trim();
-            const date = document.getElementById('task-date').value;
+            const dateInput = document.getElementById('task-date');
+            
+            // Se 'selectedDate' (do calendário) existir, use-o. Senão, use o valor do input.
+            const date = selectedDate || dateInput.value; 
+            
             if (name && date && userId) {
                 try {
                     await addDoc(collection(db, `${dbPathPrefix}/tasks`), {
@@ -1728,11 +1755,15 @@
                 });
                 
                 // Fecha o modal de detalhes, se estiver aberto
-                if (currentModal === 'taskDetails' || currentModal === 'taskDayView') {
+                if (currentModal === 'taskDayView') {
+                    // Recarrega o modal do dia para mostrar a mudança
+                    renderModal(); 
+                } else {
+                    // Fecha outros modais (como o de 7 dias)
                     currentModal = null;
                     renderModal();
                 }
-                // O listener onSnapshot vai atualizar a UI
+                // O listener onSnapshot vai atualizar a UI principal
             } catch (error) {
                 console.error("Erro ao (des)marcar tarefa:", error);
             }
@@ -1747,7 +1778,10 @@
                     await deleteDoc(taskDocRef);
                     
                     // Fecha o modal de detalhes
-                    if (currentModal === 'taskDetails' || currentModal === 'taskDayView') {
+                    if (currentModal === 'taskDayView') {
+                         // Recarrega o modal do dia para mostrar a mudança
+                        renderModal();
+                    } else {
                         currentModal = null;
                         renderModal();
                     }
@@ -1931,21 +1965,17 @@
         <header id="main-header" class="bg-white dark:bg-slate-800 shadow-md sticky top-0 z-10 border-b border-slate-200 dark:border-slate-700">
             <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div class="flex justify-between items-center h-20">
-                    <!-- Espaçador da Esquerda -->
-                    <div class="w-8"></div>
-                    
-                    <!-- Título (Centralizado) -->
-                    <div class="text-center">
+                    <!-- Título (agora à esquerda) -->
+                    <div class="flex items-center gap-2">
+                         <!-- Ícone de Alerta (controlado por JS) -->
+                        <i id="alert-icon" data-lucide="alert-triangle" class="w-6 h-6 text-rose-500 hidden animate-pulse"></i>
                         <h1 id="header-title" class="text-2xl font-bold text-slate-900 dark:text-slate-100">Painel Principal</h1>
                     </div>
                     
-                    <!-- Ícones da Direita (Alerta e Config) -->
-                    <div class="w-16 flex items-center justify-end gap-3">
-                        <i id="alert-icon" data-lucide="bell" class="w-6 h-6 text-rose-500 hidden animate-pulse"></i>
-                        <button id="settings-button" data-action="open-settings" class="text-slate-600 dark:text-slate-300 hover:text-sky-600 dark:hover:text-sky-400 transition-colors">
-                            <i data-lucide="settings" class="w-7 h-7"></i>
-                        </button>
-                    </div>
+                    <!-- Botão de Configurações (novo) -->
+                    <button id="settings-button" data-action="open-settings" class="text-slate-600 dark:text-slate-300 hover:text-sky-600 dark:hover:text-sky-400 transition-colors">
+                        <i data-lucide="settings" class="w-7 h-7"></i>
+                    </button>
                 </div>
             </div>
         </header>
