@@ -36,7 +36,8 @@
     <!-- Chart.js (Para os gráficos) -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
-    <!-- FullCalendar FOI REMOVIDO -->
+    <!-- FullCalendar (Para Calendário Avançado) -->
+    <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.14/index.global.min.js'></script>
     
     <!-- Firebase SDKs -->
     <script type="module">
@@ -69,7 +70,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "2.2.3 (Correções de Bugs Críticos)";
+        const appVersion = "2.3.0 (Tarefas com Hora)";
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -83,8 +84,9 @@
         };
         // ----------------------------------------------------
         
-        // Objeto global para guardar instâncias dos gráficos
+        // Objeto global para guardar instâncias dos gráficos e calendário
         window.myCharts = {};
+        window.myCalendar = null;
         
         let db, auth, userId, appId;
         let dbPathPrefix = '';
@@ -97,7 +99,7 @@
         let journalEntries = [];
         let allTasks = [];
         let allGoals = [];
-        let allAlerts = []; // <-- NOVO
+        let allAlerts = [];
         
         let unsubscribes = []; 
 
@@ -153,7 +155,7 @@
                 'https://cdn.tailwindcss.com',
                 'https://unpkg.com/lucide@0.395.0/dist/umd/lucide.min.js',
                 'https://cdn.jsdelivr.net/npm/chart.js', 
-                // FullCalendar removido
+                'https://cdn.jsdelivr.net/npm/fullcalendar@6.1.14/index.global.min.js', 
                 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js',
                 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js',
                 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js',
@@ -207,7 +209,7 @@
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register(swUrl)
-                    .then(registration => console.log('Service Worker v2.2.3 registrado', registration.scope))
+                    .then(registration => console.log('Service Worker v2.3.0 registrado', registration.scope))
                     .catch(error => console.error('Falha no registro do Service Worker', error));
             });
         }
@@ -375,6 +377,10 @@
             if (currentPage === 'progress') {
                 renderAllCharts(); // Redesenha os gráficos com as novas cores
             }
+            if (currentPage === 'taskCalendar') {
+                 // Recria o calendário para aplicar o tema
+                 initializeFullCalendar();
+            }
         }
         
         function updateChartColors() {
@@ -444,6 +450,10 @@
                 allTasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 console.log("Tarefas carregadas:", allTasks.length);
                 if (auth.currentUser) render();
+                
+                if (currentPage === 'taskCalendar') {
+                    initializeFullCalendar(); // Recarrega os eventos
+                }
             }, (error) => console.error("Erro ao carregar tarefas:", error));
             unsubscribes.push(unsubTasks);
 
@@ -466,10 +476,16 @@
         // --- Funções de Renderização (UI) ---
 
         function render() {
-            // Destrói gráficos antigos antes de mudar de página
+            // Destrói gráficos e calendários antigos antes de mudar de página
             if (currentPage !== 'progress') {
                 Object.values(window.myCharts).forEach(chart => chart.destroy());
                 window.myCharts = {};
+            }
+            if (currentPage !== 'taskCalendar') {
+                if (window.myCalendar) {
+                    window.myCalendar.destroy();
+                    window.myCalendar = null;
+                }
             }
 
             const appContainer = document.getElementById('app-container');
@@ -726,6 +742,38 @@
                 `;
             }).join('');
         }
+        
+        // --- FUNÇÃO DE CONTAGEM REGRESSIVA ATUALIZADA (v2.3.0) ---
+        function getTaskCountdown(task) {
+            const now = new Date();
+            
+            const [year, month, day] = task.date.split('-').map(Number);
+            let taskTime = [0, 0]; // Default 00:00
+            if (task.time) { 
+                taskTime = task.time.split(':').map(Number);
+            }
+            
+            const taskDate = new Date(year, month - 1, day, taskTime[0], taskTime[1]);
+            
+            const diffMs = taskDate.getTime() - now.getTime();
+            const diffHours = Math.ceil(diffMs / (1000 * 60 * 60)); // Horas restantes
+            
+            if (diffHours < 0) return { text: "Atrasada", color: "rose" };
+            if (diffHours === 0) return { text: "Agora!", color: "rose" };
+            
+            // LÓGICA DE 12 HORAS
+            if (diffHours <= 12) {
+                return { text: `${diffHours} ${diffHours === 1 ? 'hora' : 'horas'}`, color: "rose" };
+            }
+            
+            // LÓGICA DE DIAS
+            // Recalcula a diferença em dias a partir da *meia-noite de hoje*
+            const diffDays = Math.ceil((taskDate.getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24));
+            
+            if (diffDays === 1) return { text: "1 dia", color: "rose" };
+            if (diffDays <= 4) return { text: `${diffDays} dias`, color: "orange" };
+            return { text: `${diffDays} dias`, color: "emerald" };
+        }
 
         function renderUpcomingTasks() {
             const today = new Date();
@@ -741,45 +789,41 @@
             });
 
             // Ordena por data (mais próxima primeiro)
-            upcomingTasks.sort((a, b) => a.date.localeCompare(b.date));
+            upcomingTasks.sort((a, b) => {
+                // Constrói datas completas para ordenação
+                const aDate = new Date(`${a.date}T${a.time || '00:00'}`);
+                const bDate = new Date(`${b.date}T${b.time || '00:00'}`);
+                return aDate - bDate;
+            });
 
             if (upcomingTasks.length === 0) {
                 return `<p class="text-slate-500 dark:text-slate-400">Nenhuma tarefa para os próximos 7 dias. Adicione uma no botão '+' acima.</p>`;
             }
             
             return upcomingTasks.map(task => {
-                const daysRemaining = getDaysRemaining(task.date);
+                const countdown = getTaskCountdown(task); // <-- USA A NOVA FUNÇÃO
                 const isCompleted = task.completed;
                 
                 let colorClass = '';
-                let daysText = '';
-
-                if (daysRemaining >= 5) { // 7, 6, 5 dias
-                    colorClass = 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-800 dark:text-emerald-200 dark:border-emerald-700';
-                } else if (daysRemaining >= 2) { // 4, 3, 2 dias
-                    colorClass = 'bg-orange-100 text-orange-800 border-orange-200 dark:bg-orange-800 dark:text-orange-200 dark:border-orange-700';
-                } else { // 1, 0 dias
-                    colorClass = 'bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-800 dark:text-rose-200 dark:border-rose-700';
-                }
-                
                 if (isCompleted) {
                      colorClass = 'bg-slate-100 text-slate-400 border-slate-200 dark:bg-slate-600 dark:text-slate-400 dark:border-slate-500';
-                }
-
-                if (daysRemaining === 0) {
-                    daysText = 'Hoje';
-                } else if (daysRemaining === 1) {
-                    daysText = '1 dia';
+                } else if (countdown.color === 'rose') {
+                    colorClass = 'bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-800 dark:text-rose-200 dark:border-rose-700';
+                } else if (countdown.color === 'orange') {
+                    colorClass = 'bg-orange-100 text-orange-800 border-orange-200 dark:bg-orange-800 dark:text-orange-200 dark:border-orange-700';
                 } else {
-                    daysText = `${daysRemaining} dias`;
+                    colorClass = 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-800 dark:text-emerald-200 dark:border-emerald-700';
                 }
+                
+                // Adiciona o horário se ele existir
+                const timeString = task.time ? `<span class="text-sm font-normal text-slate-500 dark:text-slate-400 ml-2">${task.time}</span>` : '';
 
                 return `
                     <div class="flex items-center justify-between bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 p-4 rounded-lg ${isCompleted ? 'opacity-60' : ''}">
-                        <span class="text-xl text-slate-800 dark:text-slate-100 ${isCompleted ? 'line-through' : ''}">${task.name}</span>
+                        <span class="text-xl text-slate-800 dark:text-slate-100 ${isCompleted ? 'line-through' : ''}">${task.name}${timeString}</span>
                         <div class="flex items-center space-x-3">
                             <span class="font-bold text-sm px-2.5 py-0.5 rounded-full border ${colorClass}">
-                                ${daysText}
+                                ${countdown.text}
                             </span>
                             <button data-action="toggle-task" data-id="${task.id}" data-completed="${isCompleted}" class="${isCompleted ? 'text-slate-400 hover:text-slate-600' : 'text-emerald-500 hover:text-emerald-700'} transition-colors">
                                 <i data-lucide="${isCompleted ? 'check-circle' : 'circle'}" class="w-6 h-6"></i>
@@ -1319,8 +1363,16 @@
                         <label for="task-name" class="block text-lg font-medium text-slate-700 dark:text-slate-200">Nome da Tarefa</label>
                         <input type="text" id="task-name" class="mt-2 block w-full border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 rounded-lg p-3 text-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500" placeholder="Ex: Consulta médica">
                         
-                        <label for="task-date" class="block text-lg font-medium text-slate-700 dark:text-slate-200 mt-4">Data</label>
-                        <input type="date" id="task-date" value="${selectedDate || todayString}" class="mt-2 block w-full border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 rounded-lg p-3 text-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label for="task-date" class="block text-lg font-medium text-slate-700 dark:text-slate-200 mt-4">Data</label>
+                                <input type="date" id="task-date" value="${selectedDate || todayString}" class="mt-2 block w-full border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 rounded-lg p-3 text-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500">
+                            </div>
+                            <div>
+                                <label for="task-time" class="block text-lg font-medium text-slate-700 dark:text-slate-200 mt-4">Hora</label>
+                                <input type="time" id="task-time" class="mt-2 block w-full border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 rounded-lg p-3 text-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500">
+                            </div>
+                        </div>
                         
                         <button id="save-task-btn" class="mt-6 w-full bg-sky-600 text-white font-bold text-lg py-3 px-4 rounded-lg hover:bg-sky-700 shadow-md hover:shadow-lg transition-all">
                             Salvar Tarefa
@@ -1391,7 +1443,10 @@
                         currentModal = null;
                         return;
                     }
-                    const tasksForDay = allTasks.filter(t => t.date === selectedDate);
+                    const tasksForDay = allTasks
+                        .filter(t => t.date === selectedDate)
+                        .sort((a,b) => (a.time || "00:00").localeCompare(b.time || "00:00")); // Ordena por hora
+                        
                     modalTitle = `Tarefas de ${new Date(selectedDate + 'T00:00:00').toLocaleDateString('pt-BR', { day: 'numeric', month: 'long' })}`;
                     
                     if (tasksForDay.length === 0) {
@@ -1399,9 +1454,14 @@
                     } else {
                          modalContent = tasksForDay.map(task => {
                              const isCompleted = task.completed;
+                             const timeString = task.time ? `<span class="text-sm font-semibold text-sky-600 dark:text-sky-400 mr-3">${task.time}</span>` : '';
+                             
                              return `
                                 <div class="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-700 rounded-lg">
-                                    <span class="text-lg text-slate-800 dark:text-slate-100 ${isCompleted ? 'line-through text-slate-400 dark:text-slate-500' : ''}">${task.name}</span>
+                                    <div class="flex items-center">
+                                        ${timeString}
+                                        <span class="text-lg text-slate-800 dark:text-slate-100 ${isCompleted ? 'line-through text-slate-400 dark:text-slate-500' : ''}">${task.name}</span>
+                                    </div>
                                     <div class="flex items-center space-x-2">
                                         <button data-action="toggle-task" data-id="${task.id}" data-completed="${isCompleted}" class="${isCompleted ? 'text-slate-400 hover:text-slate-600' : 'text-emerald-500 hover:text-emerald-700'} transition-colors">
                                             <i data-lucide="${isCompleted ? 'check-circle' : 'circle'}" class="w-6 h-6"></i>
@@ -1710,15 +1770,18 @@
         async function handleAddTask() {
             const name = document.getElementById('task-name').value.trim();
             const dateInput = document.getElementById('task-date');
+            const timeInput = document.getElementById('task-time'); // <-- NOVO
             
             // Se 'selectedDate' (do calendário) existir, use-o. Senão, use o valor do input.
             const date = selectedDate || dateInput.value; 
+            const time = timeInput.value || null; // Salva como null se vazio
             
             if (name && date && userId) {
                 try {
                     await addDoc(collection(db, `${dbPathPrefix}/tasks`), {
                         name: name,
                         date: date,
+                        time: time, // <-- NOVO
                         completed: false,
                         createdAt: new Date().toISOString()
                     });
@@ -1743,7 +1806,6 @@
                 // CORREÇÃO v2.2.3: Recarrega o modal do dia para mostrar a mudança
                 if (currentModal === 'taskDayView') {
                     // Recarrega o modal com os dados atualizados (o onSnapshot vai atualizar 'allTasks')
-                    // Precisamos esperar o snapshot atualizar, então forçamos um re-render
                     // A forma mais simples é só fechar o modal.
                     currentModal = null;
                     renderModal();
@@ -1836,16 +1898,45 @@
         
         // --- Funções Auxiliares (Modal de Confirmação) ---
         
-        function getDaysRemaining(dateStr) {
-            const [year, month, day] = dateStr.split('-').map(Number);
-            const taskDate = new Date(year, month - 1, day); 
+        // --- NOVA FUNÇÃO DE CONTAGEM REGRESSIVA (v2.3.0) ---
+        function getTaskCountdown(task) {
+            const now = new Date();
             
-            const diffTime = taskDate.getTime() - todayDate.getTime();
+            const [year, month, day] = task.date.split('-').map(Number);
+            let taskTime = [0, 0]; // Default 00:00
+            if (task.time) { 
+                taskTime = task.time.split(':').map(Number);
+            }
             
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+            const taskDate = new Date(year, month - 1, day, taskTime[0], taskTime[1]);
             
-            return diffDays < 0 ? 0 : diffDays;
+            const diffMs = taskDate.getTime() - now.getTime();
+            
+            // Se já passou há mais de um dia, apenas "Atrasada"
+            if (diffMs < -86400000) { // -24 horas
+                 return { text: "Atrasada", color: "slate" };
+            }
+            // Se passou hoje
+            if (diffMs < 0) {
+                 return { text: "Atrasada", color: "rose" };
+            }
+            
+            const diffHours = Math.ceil(diffMs / (1000 * 60 * 60)); // Horas restantes
+            
+            // LÓGICA DE 12 HORAS
+            if (diffHours <= 12) {
+                return { text: `${diffHours} ${diffHours === 1 ? 'hora' : 'horas'}`, color: "rose" };
+            }
+            
+            // LÓGICA DE DIAS
+            // Recalcula a diferença em dias a partir da *meia-noite de hoje*
+            const diffDays = Math.ceil((new Date(year, month - 1, day).getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24));
+            
+            if (diffDays === 1) return { text: "1 dia", color: "rose" };
+            if (diffDays <= 4) return { text: `${diffDays} dias`, color: "orange" };
+            return { text: `${diffDays} dias`, color: "emerald" };
         }
+
 
         function showConfirmationModal(message, onConfirm) {
             const modalContainer = document.getElementById('modal-container');
@@ -1899,13 +1990,15 @@
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
         }
         
-        /* Remove o spinner padrão de inputs[type=date] (opcional) */
-        input[type="date"]::-webkit-calendar-picker-indicator {
+        /* Remove o spinner padrão de inputs[type=date/time] (opcional) */
+        input[type="date"]::-webkit-calendar-picker-indicator,
+        input[type="time"]::-webkit-calendar-picker-indicator {
             display: none;
             -webkit-appearance: none;
         }
-        /* Cor do texto do input[type=date] no modo escuro */
-        .dark input[type="date"] {
+        /* Cor do texto do input[type=date/time] no modo escuro */
+        .dark input[type="date"],
+        .dark input[type="time"] {
             color-scheme: dark;
         }
 
