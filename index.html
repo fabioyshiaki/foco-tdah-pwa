@@ -36,8 +36,7 @@
     <!-- Chart.js (Para os gráficos) -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
-    <!-- FullCalendar (Para Calendário Avançado) -->
-    <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.14/index.global.min.js'></script>
+    <!-- FullCalendar FOI REMOVIDO -->
     
     <!-- Firebase SDKs -->
     <script type="module">
@@ -70,7 +69,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "2.2.2 (Correção Calendário/Objetivos)";
+        const appVersion = "2.3.0 (Alertas & Calendário Simples)";
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -84,9 +83,8 @@
         };
         // ----------------------------------------------------
         
-        // Objeto global para guardar instâncias dos gráficos e calendário
+        // Objeto global para guardar instâncias dos gráficos
         window.myCharts = {};
-        window.myCalendar = null;
         
         let db, auth, userId, appId;
         let dbPathPrefix = '';
@@ -99,16 +97,17 @@
         let journalEntries = [];
         let allTasks = [];
         let allGoals = [];
+        let allAlerts = []; // <-- NOVO
         
         let unsubscribes = []; 
 
         // Estado da UI
         let authState = 'VERIFICANDO'; // 'VERIFICANDO', 'LOGADO', 'DESLOGADO'
         let currentPage = 'main'; // main, journalView, taskCalendar, progress
-        let currentModal = null; // addRoutine, addTask, addGoal, settings, taskDetails
+        let currentModal = null; // addRoutine, addTask, addGoal, settings, taskDayView, addAlert
         let currentCalendarDate = new Date();
         let currentTheme = 'light'; // 'light' ou 'dark'
-        let selectedTask = null; // Guarda a tarefa clicada no calendário
+        let selectedDate = null; // Guarda o dia clicado no calendário
         
         // --- Fonte Única de Verdade para "Hoje" (BASEADO NO LOCAL) ---
         const todayDate = new Date();
@@ -154,7 +153,7 @@
                 'https://cdn.tailwindcss.com',
                 'https://unpkg.com/lucide@0.395.0/dist/umd/lucide.min.js',
                 'https://cdn.jsdelivr.net/npm/chart.js', 
-                'https://cdn.jsdelivr.net/npm/fullcalendar@6.1.14/index.global.min.js', 
+                // FullCalendar removido
                 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js',
                 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js',
                 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js',
@@ -208,7 +207,7 @@
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register(swUrl)
-                    .then(registration => console.log('Service Worker v2.2.2 registrado', registration.scope))
+                    .then(registration => console.log('Service Worker v2.3.0 registrado', registration.scope))
                     .catch(error => console.error('Falha no registro do Service Worker', error));
             });
         }
@@ -352,6 +351,7 @@
             journalEntries = [];
             allTasks = [];
             allGoals = [];
+            allAlerts = [];
         }
 
         // --- FUNÇÕES DE TEMA ---
@@ -368,13 +368,6 @@
             renderThemeToggle(); // Atualiza o botão no modal de settings
             if (currentPage === 'progress') {
                 renderAllCharts(); // Redesenha os gráficos com as novas cores
-            }
-            if (currentPage === 'taskCalendar') {
-                 // Destrói e recria o calendário para aplicar o tema
-                 if (window.myCalendar) {
-                    window.myCalendar.destroy();
-                 }
-                 initializeFullCalendar();
             }
         }
         
@@ -443,12 +436,7 @@
             const tasksQuery = collection(db, `${dbPathPrefix}/tasks`);
             const unsubTasks = onSnapshot(tasksQuery, (snapshot) => {
                 allTasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                console.log("Tarefas carregadas:", allTasks.length);
                 if (auth.currentUser) render();
-                
-                if (currentPage === 'taskCalendar' && window.myCalendar) {
-                    initializeFullCalendar(); // Recarrega os eventos
-                }
             }, (error) => console.error("Erro ao carregar tarefas:", error));
             unsubscribes.push(unsubTasks);
 
@@ -458,21 +446,23 @@
                 if (auth.currentUser) render();
             }, (error) => console.error("Erro ao carregar objetivos:", error));
             unsubscribes.push(unsubGoals);
+            
+            // NOVO: Carregar Alertas
+            const alertsQuery = collection(db, `${dbPathPrefix}/alerts`);
+            const unsubAlerts = onSnapshot(alertsQuery, (snapshot) => {
+                allAlerts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                if (auth.currentUser) render();
+            }, (error) => console.error("Erro ao carregar alertas:", error));
+            unsubscribes.push(unsubAlerts);
         }
 
         // --- Funções de Renderização (UI) ---
 
         function render() {
-            // Destrói gráficos e calendários antigos antes de mudar de página
+            // Destrói gráficos antigos antes de mudar de página
             if (currentPage !== 'progress') {
                 Object.values(window.myCharts).forEach(chart => chart.destroy());
                 window.myCharts = {};
-            }
-            if (currentPage !== 'taskCalendar') {
-                if (window.myCalendar) {
-                    window.myCalendar.destroy();
-                    window.myCalendar = null;
-                }
             }
 
             const appContainer = document.getElementById('app-container');
@@ -521,9 +511,6 @@
                         case 'taskCalendar':
                             if(headerTitle) headerTitle.innerText = "Calendário";
                             appContainer.innerHTML = renderTaskCalendar();
-                            // Renderiza o calendário DEPOIS que o HTML (canvas) está na página
-                            // Usamos setTimeout para garantir que o DOM foi pintado
-                            setTimeout(initializeFullCalendar, 0); 
                             break;
                         case 'progress':
                             if(headerTitle) headerTitle.innerText = "Meu Progresso";
@@ -533,6 +520,7 @@
                             break;
                     }
                     renderBottomNav(); // Atualiza o estado ativo da tab bar
+                    renderAlertIcon(); // NOVO: Mostra/esconde o ícone de alerta
                     break;
             }
             // --- FIM DA LÓGICA CONDICIONAL ---
@@ -573,6 +561,28 @@
                 </div>
             `;
         }
+        
+        // --- NOVO: Função para o ícone de Alerta ---
+        function isAlertActive(alert) {
+            const createdAt = new Date(alert.createdAt);
+            const now = new Date();
+            const threeDaysInMs = 3 * 24 * 60 * 60 * 1000;
+            return (now - createdAt) < threeDaysInMs;
+        }
+        
+        function renderAlertIcon() {
+            const icon = document.getElementById('alert-icon');
+            if (!icon) return;
+            
+            const hasActiveAlerts = allAlerts.some(isAlertActive);
+            
+            if (hasActiveAlerts) {
+                icon.classList.remove('hidden');
+            } else {
+                icon.classList.add('hidden');
+            }
+        }
+        // --- FIM ---
 
         function renderMainDashboard() {
             if (authState !== 'LOGADO') { 
@@ -590,7 +600,20 @@
                         <p id="header-date" class="text-sm text-slate-500 dark:text-slate-400 font-medium">${todayFullDate}</p>
                     </div>
                 
-                    <!-- 1. Rotinas Diárias (Layout de Coluna Única) -->
+                    <!-- 1. Alertas (NOVO) -->
+                    <div class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-xl">
+                        <div class="flex justify-between items-center mb-4">
+                            <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100">Alertas Ativos</h2>
+                            <button data-action="open-modal" data-modal="addAlert" class="text-sky-600 hover:text-sky-800 dark:hover:text-sky-400 p-1 rounded-full hover:bg-sky-100 dark:hover:bg-slate-700 transition-colors">
+                                <i data-lucide="plus-circle" class="w-7 h-7"></i>
+                            </button>
+                        </div>
+                        <div id="alerts-list" class="space-y-3">
+                            ${renderActiveAlerts()}
+                        </div>
+                    </div>
+
+                    <!-- 2. Rotinas Diárias -->
                     <div class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-xl">
                         <div class="flex justify-between items-center mb-4">
                             <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100">Rotinas</h2>
@@ -603,7 +626,7 @@
                         </div>
                     </div>
 
-                    <!-- 2. Próximas Tarefas -->
+                    <!-- 3. Próximas Tarefas -->
                     <div class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-xl">
                         <div class="flex justify-between items-center mb-4">
                             <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100">Próximas Tarefas</h2>
@@ -616,7 +639,7 @@
                         </div>
                     </div>
 
-                    <!-- 3. Diário -->
+                    <!-- 4. Diário -->
                     <div class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-xl">
                         <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100 mb-4">Diário de Hoje</h2>
                         <textarea id="journal-textarea" class="w-full h-36 p-3 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 dark:placeholder-slate-400 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 transition-colors" placeholder="Como foi o seu dia?"></textarea>
@@ -625,7 +648,7 @@
                         </button>
                     </div>
 
-                    <!-- 4. Objetivos (DE VOLTA!) -->
+                    <!-- 5. Objetivos (DE VOLTA!) -->
                     <div class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-xl">
                         <div class="flex justify-between items-center mb-4">
                             <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100">Objetivos</h2>
@@ -639,6 +662,22 @@
                     </div>
                 </div>
             `;
+        }
+        
+        // --- NOVO: Renderiza Alertas Ativos ---
+        function renderActiveAlerts() {
+            const activeAlerts = allAlerts.filter(isAlertActive);
+            if (activeAlerts.length === 0) {
+                return `<p class="text-slate-500 dark:text-slate-400">Nenhum alerta ativo. Adicione um no botão '+' acima.</p>`;
+            }
+            return activeAlerts.map(alert => {
+                return `
+                    <div class="flex items-center justify-between bg-rose-100 dark:bg-rose-900 border border-rose-200 dark:border-rose-700 p-4 rounded-lg">
+                        <p class="text-xl font-medium text-rose-800 dark:text-rose-100">${alert.text}</p>
+                        <!-- Sem botão de excluir aqui, de propósito -->
+                    </div>
+                `;
+            }).join('');
         }
 
         function renderTodayRoutines() {
@@ -669,7 +708,6 @@
             }).join('');
         }
 
-        // --- LÓGICA DE TAREFAS ATUALIZADA (v2.2.0) ---
         function renderUpcomingTasks() {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
@@ -1104,86 +1142,63 @@
             return html;
         }
 
-        // --- CALENDÁRIO AVANÇADO (v2.2.1 - CORREÇÃO) ---
+        // --- CALENDÁRIO SIMPLES (v2.3.0) ---
         function renderTaskCalendar() {
-            // Apenas o container. O FullCalendar será inicializado depois.
-            return `
-                <div id="calendar-container" class="p-4">
-                    <div id="calendar" class="bg-white dark:bg-slate-800 rounded-2xl shadow-xl p-4">
-                        <!-- FullCalendar será renderizado aqui -->
+            const year = currentCalendarDate.getFullYear();
+            const month = currentCalendarDate.getMonth(); // 0-11
+            const monthName = currentCalendarDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+
+            const firstDayOfMonth = new Date(year, month, 1).getDay(); // 0=Dom, 1=Seg, ...
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+            
+            const daysOfWeek = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+            let html = `
+                <div class="p-4">
+                    <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-xl max-w-5xl mx-auto overflow-hidden">
+                        <!-- Header do Calendário -->
+                        <div class="flex justify-between items-center p-6 border-b border-slate-200 dark:border-slate-700">
+                            <button data-action="calendar-prev" class="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 dark:hover:text-slate-100 transition-colors">
+                                <i data-lucide="chevron-left" class="w-6 h-6"></i>
+                            </button>
+                            <h2 class="text-2xl font-bold text-sky-700 dark:text-sky-500 capitalize">${monthName}</h2>
+                            <button data-action="calendar-next" class="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 dark:hover:text-slate-100 transition-colors">
+                                <i data-lucide="chevron-right" class="w-6 h-6"></i>
+                            </button>
+                        </div>
+
+                        <!-- Grid dos Dias -->
+                        <div class="grid grid-cols-7">
+                            <!-- Cabeçalho dos dias da semana -->
+                            ${daysOfWeek.map(day => `<div class="text-center font-semibold text-slate-500 dark:text-slate-400 p-2 border-b border-slate-200 dark:border-slate-700 text-sm">${day}</div>`).join('')}
+                            
+                            <!-- Dias em branco (início) -->
+                            ${Array(firstDayOfMonth).fill('').map(() => `<div class="border-r border-b border-slate-200 dark:border-slate-700 h-28"></div>`).join('')}
+
+                            <!-- Dias do mês -->
+                            ${Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
+                                const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                                const tasksForDay = allTasks.filter(task => task.date === dateStr);
+                                const isToday = dateStr === todayString;
+
+                                return `
+                                    <div data-action="view-day-tasks" data-date="${dateStr}" class="border-r border-b border-slate-200 dark:border-slate-700 h-28 p-1.5 overflow-y-auto relative hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer">
+                                        <div class="font-semibold text-sm ${isToday ? 'bg-sky-600 text-white rounded-full w-6 h-6 flex items-center justify-center' : 'text-slate-700 dark:text-slate-300'}">${day}</div>
+                                        <div class="mt-1 space-y-1">
+                                            ${tasksForDay.map(task => `
+                                                <div class="w-full p-1 rounded ${task.completed ? 'bg-emerald-500' : 'bg-sky-500'}"></div>
+                                            `).join('')}
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
                     </div>
                 </div>
             `;
+            return html;
         }
         
-        function initializeFullCalendar() {
-            if (typeof FullCalendar === 'undefined') {
-                 console.error("FullCalendar não foi carregado.");
-                 return;
-            }
-            
-            const calendarEl = document.getElementById('calendar');
-            if (!calendarEl) {
-                console.error("Elemento #calendar não encontrado. Abortando.");
-                return;
-            }
-            
-            // Destrói o calendário antigo antes de desenhar um novo
-            if (window.myCalendar) {
-                window.myCalendar.destroy();
-            }
-            
-            // Formata as tarefas para o FullCalendar
-            const formattedTasks = allTasks.map(task => ({
-                id: task.id,
-                title: task.name,
-                start: task.date,
-                allDay: true,
-                // Adiciona classes customizadas
-                className: task.completed 
-                    ? 'fc-event-completed' 
-                    : 'fc-event-pending',
-                extendedProps: {
-                    completed: task.completed,
-                    name: task.name
-                }
-            }));
-            
-            const isDark = document.documentElement.classList.contains('dark');
-
-            window.myCalendar = new FullCalendar.Calendar(calendarEl, {
-                // --- CORREÇÃO v2.2.2 ---
-                // REMOVIDO: 'plugins' array. O bundle 'index.global.min.js' já inclui tudo.
-                // ---------------------
-                initialView: 'dayGridMonth',
-                locale: 'pt-br', // Tradução
-                buttonText: { // Tradução dos botões
-                    today: 'Hoje',
-                    month: 'Mês',
-                    week: 'Semana',
-                    day: 'Dia',
-                    list: 'Lista'
-                },
-                headerToolbar: {
-                    left: 'prev,next today',
-                    center: 'title',
-                    right: 'dayGridMonth,timeGridWeek,timeGridDay'
-                },
-                events: formattedTasks,
-                // --- Ação de clique para excluir/desmarcar ---
-                eventClick: (info) => {
-                    const taskId = info.event.id;
-                    const task = allTasks.find(t => t.id === taskId);
-                    if (task) {
-                        selectedTask = task; // Salva a tarefa selecionada
-                        currentModal = 'taskDetails'; // Abre o novo modal
-                        renderModal();
-                    }
-                }
-            });
-            
-            window.myCalendar.render();
-        }
         
         // --- PÁGINA DE OBJETIVOS (v2.2.2 - CORREÇÃO) ---
         function renderGoalStats() {
@@ -1194,11 +1209,6 @@
                 <div class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-xl">
                     <div class="flex justify-between items-center mb-4">
                         <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100">Objetivos</h2>
-                        <!-- Botão de adicionar movido para a tela 'main'
-                        <button data-action="open-modal" data-modal="addGoal" class="text-sky-600 hover:text-sky-800 dark:hover:text-sky-400 p-1 rounded-full hover:bg-sky-100 dark:hover:bg-slate-700 transition-colors">
-                            <i data-lucide="plus-circle" class="w-7 h-7"></i>
-                        </button>
-                        -->
                     </div>
                     
                     <!-- Objetivos Ativos (MODO LEITURA) -->
@@ -1224,7 +1234,7 @@
             `;
         }
         
-        // --- NOVO: Renderiza a Tab Bar ---
+        // --- Renderiza a Tab Bar ---
         function renderBottomNav() {
             const nav = document.getElementById('bottom-nav');
             if (!nav) return;
@@ -1254,6 +1264,7 @@
             const modalContainer = document.getElementById('modal-container');
             if (!currentModal) {
                 selectedTask = null; // Limpa a tarefa selecionada
+                selectedDate = null; // Limpa a data selecionada
                 modalContainer.innerHTML = '';
                 return;
             }
@@ -1269,6 +1280,17 @@
                         <input type="text" id="routine-name" class="mt-2 block w-full border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 rounded-lg p-3 text-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500" placeholder="Ex: Tomar café da manhã">
                         <button id="save-routine-btn" class="mt-6 w-full bg-sky-600 text-white font-bold text-lg py-3 px-4 rounded-lg hover:bg-sky-700 shadow-md hover:shadow-lg transition-all">
                             Salvar Rotina
+                        </button>
+                    `;
+                    break;
+                case 'addAlert': // <-- NOVO MODAL
+                    modalTitle = 'Novo Alerta';
+                    modalContent = `
+                        <label for="alert-text" class="block text-lg font-medium text-slate-700 dark:text-slate-200">Mensagem do Alerta</label>
+                        <textarea id="alert-text" class="mt-2 block w-full border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 rounded-lg p-3 text-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500" rows="3" placeholder="Ex: Lembrar de tomar o remédio"></textarea>
+                        <p class="text-sm text-slate-500 dark:text-slate-400 mt-2">Este alerta ficará visível no painel por 3 dias.</p>
+                        <button id="save-alert-btn" class="mt-6 w-full bg-sky-600 text-white font-bold text-lg py-3 px-4 rounded-lg hover:bg-sky-700 shadow-md hover:shadow-lg transition-all">
+                            Salvar Alerta
                         </button>
                     `;
                     break;
@@ -1298,6 +1320,19 @@
                     break;
                 case 'settings':
                     modalTitle = 'Configurações';
+                    // Renderiza a lista de alertas para gerenciamento
+                    const allAlertsHtml = allAlerts.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).map(alert => {
+                        const isActive = isAlertActive(alert);
+                        return `
+                            <div class="flex items-center justify-between p-3 bg-slate-100 dark:bg-slate-700 rounded-lg">
+                                <span class="text-slate-800 dark:text-slate-100 ${!isActive ? 'line-through text-slate-400 dark:text-slate-500' : ''}">${alert.text}</span>
+                                <button data-action="delete-alert" data-id="${alert.id}" class="text-slate-400 dark:text-slate-500 hover:text-rose-500 transition-colors">
+                                    <i data-lucide="trash-2" class="w-5 h-5"></i>
+                                </button>
+                            </div>
+                        `;
+                    }).join('');
+                    
                     modalContent = `
                         <div class="space-y-6">
                             <!-- Status do Usuário -->
@@ -1309,6 +1344,14 @@
                             <!-- Botão de Tema -->
                             <div id="theme-toggle-container-modal">
                                 <!-- O botão de tema será renderizado aqui -->
+                            </div>
+                            
+                            <!-- Gerenciar Alertas -->
+                            <div>
+                                <p class="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-3">Gerenciar Alertas</p>
+                                <div class="max-h-48 overflow-y-auto space-y-2 pr-2">
+                                     ${allAlerts.length > 0 ? allAlertsHtml : '<p class="text-sm text-slate-500 dark:text-slate-400">Nenhum alerta criado.</p>'}
+                                </div>
                             </div>
                             
                             <!-- Botão de Sair -->
@@ -1324,17 +1367,45 @@
                         </div>
                     `;
                     break;
-                // --- NOVO MODAL DE DETALHES DA TAREFA ---
+                case 'taskDayView': // <-- NOVO MODAL (do Calendário)
+                    if (!selectedDate) {
+                        currentModal = null;
+                        return;
+                    }
+                    const tasksForDay = allTasks.filter(t => t.date === selectedDate);
+                    modalTitle = `Tarefas de ${new Date(selectedDate + 'T00:00:00').toLocaleDateString('pt-BR', { day: 'numeric', month: 'long' })}`;
+                    
+                    if (tasksForDay.length === 0) {
+                         modalContent = `<p class="text-slate-500 dark:text-slate-400 text-lg">Nenhuma tarefa para este dia.</p>`;
+                    } else {
+                         modalContent = tasksForDay.map(task => {
+                             const isCompleted = task.completed;
+                             return `
+                                <div class="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-700 rounded-lg">
+                                    <span class="text-lg text-slate-800 dark:text-slate-100 ${isCompleted ? 'line-through text-slate-400 dark:text-slate-500' : ''}">${task.name}</span>
+                                    <div class="flex items-center space-x-2">
+                                        <button data-action="toggle-task" data-id="${task.id}" data-completed="${isCompleted}" class="${isCompleted ? 'text-slate-400 hover:text-slate-600' : 'text-emerald-500 hover:text-emerald-700'} transition-colors">
+                                            <i data-lucide="${isCompleted ? 'check-circle' : 'circle'}" class="w-6 h-6"></i>
+                                        </button>
+                                        <button data-action="delete-task" data-id="${task.id}" class="text-slate-400 dark:text-slate-500 hover:text-rose-500 transition-colors">
+                                            <i data-lucide="trash-2" class="w-5 h-5"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                             `;
+                         }).join('<div class="h-2"></div>'); // Espaçador
+                    }
+                    break;
                 case 'taskDetails':
                     if (!selectedTask) {
                         currentModal = null;
                         return;
                     }
                     modalTitle = 'Detalhes da Tarefa';
-                    const isCompleted = selectedTask.completed;
-                    const toggleButtonText = isCompleted ? 'Marcar como Pendente' : 'Concluir Tarefa';
-                    const toggleButtonIcon = isCompleted ? 'x-circle' : 'check-circle';
-                    const toggleButtonClass = isCompleted ? 'bg-slate-500 hover:bg-slate-600' : 'bg-emerald-600 hover:bg-emerald-700';
+                    const isCompletedTask = selectedTask.completed;
+                    const toggleButtonText = isCompletedTask ? 'Marcar como Pendente' : 'Concluir Tarefa';
+                    const toggleButtonIcon = isCompletedTask ? 'x-circle' : 'check-circle';
+                    const toggleButtonClass = isCompletedTask ? 'bg-slate-500 hover:bg-slate-600' : 'bg-emerald-600 hover:bg-emerald-700';
                     
                     modalContent = `
                         <div class="space-y-6">
@@ -1345,7 +1416,7 @@
                             </p>
                             
                             <!-- Botão de (Des)Marcar -->
-                            <button data-action="toggle-task" data-id="${selectedTask.id}" data-completed="${isCompleted}" class="${toggleButtonClass} flex items-center justify-center space-x-3 w-full text-white text-lg font-semibold py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition-all">
+                            <button data-action="toggle-task" data-id="${selectedTask.id}" data-completed="${isCompletedTask}" class="${toggleButtonClass} flex items-center justify-center space-x-3 w-full text-white text-lg font-semibold py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition-all">
                                 <i data-lucide="${toggleButtonIcon}" class="w-5 h-5"></i>
                                 <span>${toggleButtonText}</span>
                             </button>
@@ -1447,27 +1518,37 @@
                     currentModal = null;
                     renderModal();
                 }
+                
+                // NOVO: Ação de clique no dia do calendário
+                if (action === 'view-day-tasks') {
+                    selectedDate = target.dataset.date;
+                    currentModal = 'taskDayView';
+                    renderModal();
+                }
 
                 // Ações de Salvar (CRUD)
                 if (action === 'save-routine') handleAddRoutine();
                 if (action === 'save-task') handleAddTask();
                 if (action === 'save-goal') handleAddGoal();
-                if (action === 'save-journal') handleSaveJournal();
+                if (action === 'save-alert') handleAddAlert(); // <-- NOVO
 
                 // Ações de Itens (CRUD)
                 if (action === 'toggle-routine') handleToggleRoutine(target);
                 if (action === 'delete-routine') handleDeleteRoutine(target.dataset.id);
                 if (action === 'toggle-task') handleToggleTask(target.dataset.id, target.dataset.completed === 'true'); // <-- MUDADO
-                if (action === 'delete-task') handleDeleteTask(target.dataset.id); // <-- NOVO
+                if (action === 'delete-task') handleDeleteTask(target.dataset.id); // <-- MUDADO
                 if (action === 'complete-goal') handleCompleteGoal(target); // <-- MUDADO
                 if (action === 'delete-goal') handleDeleteGoal(target.dataset.id);
+                if (action === 'delete-alert') handleDeleteAlert(target.dataset.id); // <-- NOVO
                 
                 // Ações do Calendário
                 if (action === 'calendar-prev') {
-                    window.myCalendar?.prev();
+                    currentCalendarDate.setMonth(currentCalendarDate.getMonth() - 1);
+                    render(); // Recria a página inteira
                 }
                 if (action === 'calendar-next') {
-                    window.myCalendar?.next();
+                    currentCalendarDate.setMonth(currentCalendarDate.getMonth() + 1);
+                    render(); // Recria a página inteira
                 }
             });
             
@@ -1485,10 +1566,45 @@
                 if (e.target.id === 'save-goal-btn') {
                     handleAddGoal();
                 }
+                if (e.target.id === 'save-alert-btn') { // <-- NOVO
+                    handleAddAlert();
+                }
             });
         }
         
         // --- Funções de Manipulação de Dados (CRUD) ---
+        
+        // --- CRUD de Alertas (NOVO) ---
+        async function handleAddAlert() {
+            const input = document.getElementById('alert-text');
+            const text = input.value.trim();
+            if (text && userId) { 
+                try {
+                    await addDoc(collection(db, `${dbPathPrefix}/alerts`), {
+                        text: text,
+                        createdAt: new Date().toISOString()
+                    });
+                    currentModal = null;
+                    renderModal();
+                } catch (error) {
+                    console.error("Erro ao adicionar alerta:", error);
+                }
+            }
+        }
+        
+        async function handleDeleteAlert(alertId) {
+             showConfirmationModal("Tem certeza que deseja excluir este alerta?", async () => {
+                if (!userId) return;
+                 try {
+                    await deleteDoc(doc(db, `${dbPathPrefix}/alerts`, alertId));
+                    currentModal = 'settings'; // Mantém o modal de settings aberto
+                    renderModal(); // Re-renderiza o modal
+                } catch (error) {
+                    console.error("Erro ao deletar alerta:", error);
+                }
+            });
+        }
+        // --- FIM CRUD Alertas ---
 
         async function handleAddRoutine() {
             const input = document.getElementById('routine-name');
@@ -1612,7 +1728,7 @@
                 });
                 
                 // Fecha o modal de detalhes, se estiver aberto
-                if (currentModal === 'taskDetails') {
+                if (currentModal === 'taskDetails' || currentModal === 'taskDayView') {
                     currentModal = null;
                     renderModal();
                 }
@@ -1631,8 +1747,10 @@
                     await deleteDoc(taskDocRef);
                     
                     // Fecha o modal de detalhes
-                    currentModal = null;
-                    renderModal();
+                    if (currentModal === 'taskDetails' || currentModal === 'taskDayView') {
+                        currentModal = null;
+                        renderModal();
+                    }
                     // O listener onSnapshot vai atualizar a UI
                 } catch (error) {
                     console.error("Erro ao excluir tarefa:", error);
@@ -1803,54 +1921,6 @@
              box-shadow: var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow, 0 0 #0000);
              --tw-ring-opacity: 0.5;
         }
-        
-        /* Estilos do FullCalendar para Dark Mode */
-        .dark .fc {
-            color: #cbd5e1; /* slate-300 */
-        }
-        .dark .fc-daygrid-day-frame, .dark .fc-col-header-cell, .dark .fc-list-table, .dark .fc-list-day-frame, .dark .fc-timegrid-slot-lane {
-            background-color: #1e293b !important; /* slate-800 */
-            border-color: #334155 !important; /* slate-700 */
-        }
-        .dark .fc-list-event:hover td {
-            background-color: #334155 !important; /* slate-700 */
-        }
-        .dark .fc .fc-day-today {
-            background-color: #334155 !important; /* slate-700, um pouco mais escuro */
-        }
-        .dark .fc .fc-toolbar-title {
-            color: #f1f5f9; /* slate-100 */
-        }
-        .dark .fc .fc-button-primary {
-            background-color: #334155; /* slate-700 */
-            border-color: #475569; /* slate-600 */
-            color: #f1f5f9; /* slate-100 */
-        }
-        .dark .fc .fc-button-primary:hover {
-            background-color: #475569; /* slate-600 */
-        }
-        .fc-event-pending {
-            background-color: #bae6fd !important; /* sky-200 */
-            border-color: #7dd3fc !important; /* sky-300 */
-            color: #0c4a6e !important; /* sky-900 */
-        }
-        .dark .fc-event-pending {
-            background-color: #0c4a6e !important; /* sky-900 */
-            border-color: #0369a1 !important; /* sky-700 */
-            color: #e0f2fe !important; /* sky-100 */
-        }
-        .fc-event-completed {
-            background-color: #d1fae5 !important; /* emerald-100 */
-            border-color: #a7f3d0 !important; /* emerald-200 */
-            color: #065f46 !important; /* emerald-800 */
-            opacity: 0.7;
-        }
-        .dark .fc-event-completed {
-            background-color: #064e3b !important; /* emerald-900 */
-            border-color: #059669 !important; /* emerald-600 */
-            color: #a7f3d0 !important; /* emerald-200 */
-            opacity: 0.6;
-        }
     </style>
 </head>
 <body class="antialiased font-sans bg-slate-100 dark:bg-slate-900">
@@ -1861,15 +1931,21 @@
         <header id="main-header" class="bg-white dark:bg-slate-800 shadow-md sticky top-0 z-10 border-b border-slate-200 dark:border-slate-700">
             <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div class="flex justify-between items-center h-20">
-                    <!-- Título (agora à esquerda) -->
+                    <!-- Espaçador da Esquerda -->
+                    <div class="w-8"></div>
+                    
+                    <!-- Título (Centralizado) -->
                     <div class="text-center">
                         <h1 id="header-title" class="text-2xl font-bold text-slate-900 dark:text-slate-100">Painel Principal</h1>
                     </div>
                     
-                    <!-- Botão de Configurações (novo) -->
-                    <button id="settings-button" data-action="open-settings" class="text-slate-600 dark:text-slate-300 hover:text-sky-600 dark:hover:text-sky-400 transition-colors">
-                        <i data-lucide="settings" class="w-7 h-7"></i>
-                    </button>
+                    <!-- Ícones da Direita (Alerta e Config) -->
+                    <div class="w-16 flex items-center justify-end gap-3">
+                        <i id="alert-icon" data-lucide="bell" class="w-6 h-6 text-rose-500 hidden animate-pulse"></i>
+                        <button id="settings-button" data-action="open-settings" class="text-slate-600 dark:text-slate-300 hover:text-sky-600 dark:hover:text-sky-400 transition-colors">
+                            <i data-lucide="settings" class="w-7 h-7"></i>
+                        </button>
+                    </div>
                 </div>
             </div>
         </header>
