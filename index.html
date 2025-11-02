@@ -26,8 +26,7 @@
             setPersistence,
             browserLocalPersistence,
             GoogleAuthProvider,
-            signInWithRedirect, 
-            getRedirectResult,  
+            signInWithPopup,  // <-- MUDANÇA
             signOut
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { 
@@ -48,7 +47,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "1.7.0 (Sem PWA/SW)"; // Removido PWA para depurar auth
+        const appVersion = "1.8.0 (Login com Popup)"; // Mudança de estratégia
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -128,8 +127,91 @@
         // --- Fim da Fonte de Verdade ---
 
 
-        // --- PWA E SERVICE WORKER REMOVIDOS ---
-        // (A lógica do PWA/SW foi removida desta versão para depuração)
+        // --- PWA (Manifest & Service Worker) ---
+        
+        // 1. Manifesto (inline)
+        const manifest = {
+            "name": "Foco TDAH",
+            "short_name": "Foco",
+            "start_url": ".",
+            "display": "standalone",
+            "background_color": "#f1f5f9", // bg-slate-100
+            "theme_color": "#0ea5e9", // bg-sky-500
+            "description": `Seu assistente pessoal para rotinas, tarefas e foco. v${appVersion}`,
+            "icons": [
+                { "src": "https://placehold.co/192x192/0ea5e9/white?text=Foco&font=sans-serif", "type": "image/png", "sizes": "192x192" },
+                { "src": "https://placehold.co/512x512/0ea5e9/white?text=Foco&font=sans-serif", "type": "image/png", "sizes": "512x512" }
+            ]
+        };
+        const manifestString = JSON.stringify(manifest);
+        const manifestUrl = 'data:application/json;charset=utf-8,' + encodeURIComponent(manifestString);
+        document.querySelector('head').insertAdjacentHTML('beforeend', `<link rel="manifest" href="${manifestUrl}">`);
+
+        // 2. Service Worker (inline)
+        const swScript = `
+            const CACHE_NAME = 'foco-tdah-cache-v${appVersion}'; // Versão do Cache
+            const urlsToCache = [
+                '/',
+                'https://cdn.tailwindcss.com',
+                'https://unpkg.com/lucide@0.395.0/dist/umd/lucide.min.js',
+                'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js',
+                'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js',
+                'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js',
+                'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap',
+                'https://fonts.gstatic.com/s/inter/v13/UcC73FwrK3iLTeHuS_fvQtMwCp50KnMa1ZL7.woff2'
+            ];
+
+            // Limpa caches antigos
+            self.addEventListener('activate', event => {
+                event.waitUntil(
+                    caches.keys().then(cacheNames => {
+                        return Promise.all(
+                            cacheNames.filter(cacheName => cacheName !== CACHE_NAME)
+                                      .map(cacheName => caches.delete(cacheName))
+                        );
+                    })
+                );
+            });
+
+            self.addEventListener('install', event => {
+                event.waitUntil(
+                    caches.open(CACHE_NAME)
+                        .then(cache => {
+                            console.log('Cache aberto');
+                            return cache.addAll(urlsToCache);
+                        })
+                );
+            });
+
+            // LÓGICA DE CACHE SIMPLIFICADA (só rede primeiro para o index)
+            self.addEventListener('fetch', event => {
+                if (event.request.mode === 'navigate') {
+                    event.respondWith(
+                        fetch(event.request).catch(() => caches.match(event.request))
+                    );
+                } else {
+                     event.respondWith(
+                        caches.match(event.request)
+                            .then(response => {
+                                if (response) {
+                                    return response;
+                                }
+                                return fetch(event.request);
+                            })
+                    );
+                }
+            });
+        `;
+        const swUrl = 'data:application/javascript,' + encodeURIComponent(swScript);
+
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register(swUrl)
+                    .then(registration => logEvent('INFO', 'Service Worker v1.8.0 registrado', registration.scope))
+                    .catch(error => logEvent('ERROR', 'Falha no registro do Service Worker', error));
+            });
+        }
+        // --- FIM PWA ---
 
 
         // --- Inicialização ---
@@ -140,7 +222,7 @@
             render(); // Renderiza o estado inicial (loading spinner)
         });
 
-        // --- LÓGICA DE LOGIN (v1.5.0) ---
+        // --- LÓGICA DE LOGIN ATUALIZADA (v1.8.0) ---
         function setLoggedInState(user) {
             logEvent('SUCCESS', 'setLoggedInState: Logado com sucesso.', user.email);
             currentUser = user; 
@@ -189,40 +271,17 @@
 
                 logEvent('INFO', 'initializeAppFirebase: Verificando estado de autenticação...');
                 
-                // 1. Tenta pegar o resultado do redirect
-                try {
-                    logEvent('INFO', 'Verificando redirect...');
-                    const result = await getRedirectResult(auth);
-                    
-                    if (result) {
-                        // Sucesso! Usuário logou via redirect.
-                        logEvent('SUCCESS', 'Login via redirect:', result.user.email);
-                        setLoggedInState(result.user);
-                        setupAuthListener(); // Configura o listener para logout futuro
-                        return; // FIM
-                    }
-                } catch (error) {
-                    // Erro no redirect (unauthorized-domain, etc)
-                    logEvent('ERROR', 'Erro no getRedirectResult', error.code, error.message);
-                    setLoggedOutState(error);
-                    setupAuthListener(); // Configura o listener para login futuro
-                    return; // FIM
-                }
-
-                // 2. Sem redirect. Verifica a sessão (usuário já logado)
-                logEvent('INFO', 'Sem redirect. Verificando sessão (onAuthStateChanged)...');
-                const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-                    unsubscribeAuth(); // Só precisamos deste primeiro disparo
+                // LÓGICA DE INICIALIZAÇÃO SIMPLIFICADA (só checa sessão)
+                onAuthStateChanged(auth, (user) => {
                     if (user) {
                         // Usuário já estava logado
                         logEvent('SUCCESS', 'Login via Sessão:', user.email);
                         setLoggedInState(user);
                     } else {
-                        // Sem redirect E sem sessão. Estamos deslogados.
+                        // Sem sessão. Estamos deslogados.
                         logEvent('INFO', 'Deslogado.');
                         setLoggedOutState(null);
                     }
-                    setupAuthListener(); // Configura o listener para logout futuro
                 });
                 // --- FIM DA LÓGICA DE LOGIN ---
 
@@ -232,30 +291,30 @@
             }
         }
         
-        // Listener para mudanças futuras (principalmente logout)
-        function setupAuthListener() {
-            onAuthStateChanged(auth, (user) => {
-                if (!user && authState === 'LOGADO') {
-                    // Usuário acabou de deslogar
-                    logEvent('INFO', 'Evento de Logout detectado.');
-                    setLoggedOutState(null);
-                }
-            });
-        }
-        
         // --- FUNÇÕES DE LOGIN / LOGOUT ---
         
         async function handleGoogleLogin() {
             authError = null; // Limpa erros antigos
-            logEvent('INFO', 'handleGoogleLogin: Iniciando signInWithRedirect...');
+            logEvent('INFO', 'handleGoogleLogin: Iniciando signInWithPopup...');
             render(); 
         
             const provider = new GoogleAuthProvider();
             try {
-                await signInWithRedirect(auth, provider);
-                // A página será redirecionada
+                // --- MUDANÇA PRINCIPAL ---
+                const result = await signInWithPopup(auth, provider);
+                // -------------------------
+                
+                if (result) {
+                    // Sucesso! O onAuthStateChanged vai ser chamado,
+                    // mas podemos adiantar o processo.
+                    logEvent('SUCCESS', 'Login via Popup:', result.user.email);
+                    setLoggedInState(result.user);
+                } else {
+                    logEvent('WARN', 'Popup fechado sem login.');
+                    setLoggedOutState(null);
+                }
             } catch (error) {
-                logEvent('ERROR', 'Erro ao iniciar login com Google', error.code, error.message);
+                logEvent('ERROR', 'Erro ao logar com Popup', error.code, error.message);
                 setLoggedOutState(error);
             }
         }
@@ -271,8 +330,7 @@
                 }
                 
                 await signOut(auth);
-                // O 'onAuthStateChanged' (configurado em setupAuthListener)
-                // vai pegar o evento de logout e chamar setLoggedOutState.
+                // O 'onAuthStateChanged' vai pegar o evento de logout e chamar setLoggedOutState.
                 
             } catch (error) {
                 logEvent('ERROR', 'Erro ao fazer logout', error.message);
