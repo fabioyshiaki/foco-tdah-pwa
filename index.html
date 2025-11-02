@@ -70,7 +70,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "2.4.1 (Ajustes de UI)";
+        const appVersion = "2.4.2 (Menu de Ajustes na Tab Bar)";
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -209,7 +209,7 @@
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register(swUrl)
-                    .then(registration => console.log('Service Worker v2.4.1 registrado', registration.scope))
+                    .then(registration => console.log('Service Worker v2.4.2 registrado', registration.scope))
                     .catch(error => console.error('Falha no registro do Service Worker', error));
             });
         }
@@ -450,10 +450,6 @@
                 allTasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 console.log("Tarefas carregadas:", allTasks.length);
                 if (auth.currentUser) render();
-                
-                if (currentPage === 'taskCalendar') {
-                    initializeFullCalendar(); // Recarrega os eventos
-                }
             }, (error) => console.error("Erro ao carregar tarefas:", error));
             unsubscribes.push(unsubTasks);
 
@@ -830,6 +826,7 @@
             }
             
             return upcomingTasks.map(task => {
+                // --- CORREÇÃO v2.3.4: Chama a função global ---
                 const countdown = getTaskCountdown(task); 
                 const isCompleted = task.completed;
                 
@@ -1349,18 +1346,22 @@
             const nav = document.getElementById('bottom-nav');
             if (!nav) return;
             
+            // --- MUDANÇA v2.4.2 ---
             const tabs = [
-                { id: 'main', icon: 'layout-dashboard', label: 'Início' },
-                { id: 'journalView', icon: 'book-open', label: 'Diário' },
-                { id: 'taskCalendar', icon: 'calendar-days', label: 'Calendário' },
-                { id: 'progress', icon: 'pie-chart', label: 'Progresso' }
+                { id: 'main', icon: 'layout-dashboard', label: 'Início', action: `nav-main` },
+                { id: 'journalView', icon: 'book-open', label: 'Diário', action: `nav-journalView` },
+                { id: 'taskCalendar', icon: 'calendar-days', label: 'Calendário', action: `nav-taskCalendar` },
+                { id: 'progress', icon: 'pie-chart', label: 'Progresso', action: `nav-progress` },
+                { id: 'settings', icon: 'settings', label: 'Ajustes', action: `open-settings` } // <-- NOVO ITEM
             ];
             
             nav.innerHTML = tabs.map(tab => {
-                const isActive = currentPage === tab.id;
+                // "Settings" não é uma página, por isso nunca está "ativa"
+                const isActive = (currentPage === tab.id) && (tab.action.startsWith('nav-'));
                 const activeClass = isActive ? 'text-sky-500 dark:text-sky-400' : 'text-slate-500 dark:text-slate-400';
+                
                 return `
-                    <button data-action="nav-${tab.id}" class="flex flex-col items-center justify-center p-2 w-full ${activeClass} transition-colors">
+                    <button data-action="${tab.action}" class="flex flex-col items-center justify-center p-2 w-full ${activeClass} transition-colors">
                         <i data-lucide="${tab.icon}" class="w-6 h-6"></i>
                         <span class="text-xs font-semibold">${tab.label}</span>
                     </button>
@@ -1947,6 +1948,7 @@
         // --- Funções Auxiliares (Modal de Confirmação) ---
         
         // --- FUNÇÃO DE CONTAGEM REGRESSIVA (v2.3.1 - Correção) ---
+        // *** ESTA É A FUNÇÃO CORRIGIDA ***
         function getTaskCountdown(task) {
             const now = new Date();
             
@@ -2094,21 +2096,24 @@
         <!-- Header Principal -->
         <header id="main-header" class="bg-white dark:bg-slate-800 shadow-md sticky top-0 z-10 border-b border-slate-200 dark:border-slate-700">
             <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div class="flex justify-between items-center h-20">
-                    <!-- Espaçador da Esquerda (para balancear) -->
-                    <div class="w-8"></div> 
+                <!-- MUDANÇA v2.4.2: Header Centralizado -->
+                <div class="flex justify-center items-center h-20 relative">
                     
-                    <!-- Título (Centralizado com ícones) -->
-                    <div class="flex items-center gap-3">
+                    <!-- Ícones à esquerda do Título -->
+                    <div class="absolute left-4 flex items-center gap-2">
                         <i id="alert-icon" data-lucide="bell" class="w-6 h-6 text-rose-500 hidden animate-pulse"></i>
+                    </div>
+                    
+                    <!-- Título (Centralizado) -->
+                    <div class="flex items-center gap-3">
                         <h1 id="header-title" class="text-2xl font-bold text-slate-900 dark:text-slate-100">Painel Principal</h1>
                         <i id="task-clock-icon" data-lucide="clock" class="w-6 h-6 hidden"></i> 
                     </div>
                     
-                    <!-- Botão de Configurações (Direita) -->
-                    <button id="settings-button" data-action="open-settings" class="text-slate-600 dark:text-slate-300 hover:text-sky-600 dark:hover:text-sky-400 transition-colors">
-                        <i data-lucide="settings" class="w-7 h-7"></i>
-                    </button>
+                    <!-- Ícones à direita (Vazio, pois o Settings foi movido) -->
+                    <div class="w-8 absolute right-4">
+                        <!-- <button id="settings-button" data-action="open-settings" ...> ... </button> -->
+                    </div>
                 </div>
             </div>
         </header>
