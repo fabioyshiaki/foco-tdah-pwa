@@ -31,8 +31,7 @@
             signOut,
             signInAnonymously, 
             linkWithRedirect,
-            linkWithCredential, // <-- NOVO
-            GoogleAuthProvider // <-- NOVO
+            linkWithCredential
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { 
             getFirestore, 
@@ -52,7 +51,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "1.3.2"; // Lógica de vinculação refeita
+        const appVersion = "1.3.3"; // Corrige o bug do spinner infinito
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -84,6 +83,7 @@
         let unsubscribes = []; 
 
         // Estado da UI
+        let authState = 'VERIFICANDO'; // 'VERIFICANDO', 'LOGADO', 'DESLOGADO'
         let currentPage = 'main'; 
         let currentModal = null; 
         let currentCalendarDate = new Date();
@@ -190,7 +190,7 @@
             render(); // Renderiza o estado inicial (loading spinner)
         });
 
-        // --- LÓGICA DE LOGIN ATUALIZADA (v1.3.2) ---
+        // --- LÓGICA DE LOGIN ATUALIZADA (v1.3.3) ---
         function setLoggedInState(user) {
             authError = null; // Limpa erros antigos a cada mudança
             
@@ -201,15 +201,22 @@
                     // Isso falha se "Anônimo" não estiver ativado no console
                     console.error("❌ Erro ao logar anonimamente:", err);
                     authError = err;
+                    authState = 'DESLOGADO'; // Falha crítica
                     render();
                 });
                 return;
             }
             
             console.log("...setLoggedInState: user existe. É anônimo?", user.isAnonymous);
-            currentUser = user;
+            
+            // --- CORREÇÃO DO BUG v1.3.2 ---
+            // Define o currentUser *aqui*
+            currentUser = user; 
+            // -----------------------------
+            
             userId = user.uid;
             dbPathPrefix = `/artifacts/${appId}/users/${userId}`;
+            authState = 'LOGADO'; // Define o estado como LOGADO
             
             // Verifica se o db precisa ser reinicializado (após logout)
             if (!db) {
@@ -227,6 +234,7 @@
                 if (!firebaseConfig.apiKey || firebaseConfig.apiKey === "SUA_CHAVE_API_SECRETA_COLE_AQUI") {
                     console.error("Configuração do Firebase não encontrada. Cole o seu objeto firebaseConfig.");
                     authError = { message: "Chave API não encontrada. Edite o arquivo HTML e cole sua chave API." };
+                    authState = 'DESLOGADO';
                     render();
                     return;
                 }
@@ -250,10 +258,6 @@
                     console.error("Erro ao vincular contas:", error);
                     authError = error; // Salva o erro para mostrar na UI
                     
-                    // --- LÓGICA DE ERRO 'credential-already-in-use' ---
-                    // Se o erro for "credencial já em uso", tentamos logar
-                    // com o Google e *manualmente* copiar os dados.
-                    // (Esta é uma lógica de fallback complexa)
                     if (error.code === 'auth/credential-already-in-use') {
                          console.warn("Conta já existe. Tentando login direto com Google.");
                          authError = { message: "Esta conta Google já está em uso. Tentando login direto..." };
@@ -274,6 +278,7 @@
             } catch (error) {
                 console.error("Erro ao inicializar Firebase:", error);
                 authError = error;
+                authState = 'DESLOGADO';
                 render();
             }
         }
@@ -362,15 +367,15 @@
             const unsubRoutines = onSnapshot(routinesQuery, (snapshot) => {
                 allRoutines = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 console.log("Rotinas carregadas:", allRoutines.length);
-                render();
-            }, (error) => console.error("Erro ao carregar rotinas:", error)); // Adiciona log de erro
+                if (auth.currentUser) render(); // Só renderiza se ainda estiver logado
+            }, (error) => console.error("Erro ao carregar rotinas:", error)); 
             unsubscribes.push(unsubRoutines); 
 
             const historyQuery = collection(db, `${dbPathPrefix}/routineHistory`);
             const unsubHistory = onSnapshot(historyQuery, (snapshot) => {
                 routineHistory = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 console.log("Histórico de rotinas carregado:", routineHistory.length);
-                render();
+                if (auth.currentUser) render();
             }, (error) => console.error("Erro ao carregar histórico:", error));
             unsubscribes.push(unsubHistory);
 
@@ -378,7 +383,7 @@
             const unsubJournal = onSnapshot(journalQuery, (snapshot) => {
                 journalEntries = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 console.log("Entradas do diário carregadas:", journalEntries.length);
-                render();
+                if (auth.currentUser) render();
             }, (error) => console.error("Erro ao carregar diário:", error));
             unsubscribes.push(unsubJournal);
 
@@ -386,7 +391,7 @@
             const unsubTasks = onSnapshot(tasksQuery, (snapshot) => {
                 allTasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 console.log("Tarefas carregadas:", allTasks.length);
-                render();
+                if (auth.currentUser) render();
             }, (error) => console.error("Erro ao carregar tarefas:", error));
             unsubscribes.push(unsubTasks);
 
@@ -394,7 +399,7 @@
             const unsubGoals = onSnapshot(goalsQuery, (snapshot) => {
                 allGoals = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 console.log("Objetivos carregados:", allGoals.length);
-                render();
+                if (auth.currentUser) render();
             }, (error) => console.error("Erro ao carregar objetivos:", error));
             unsubscribes.push(unsubGoals);
         }
@@ -409,32 +414,57 @@
             
             if (!appContainer || !header || !sidebar || !menuButton) return;
             
-            // O app sempre renderiza o painel principal,
-            // pois o login anônimo garante que sempre há um 'user'
-            header.classList.remove('hidden');
-            sidebar.classList.remove('hidden'); 
-            menuButton.classList.remove('hidden');
-        
-            document.getElementById('header-date').innerText = todayFullDate;
+            // --- LÓGICA DE RENDERIZAÇÃO ATUALIZADA ---
+            switch(authState) {
+                case 'VERIFICANDO':
+                    // Mostra spinner
+                    header.classList.add('hidden');
+                    sidebar.classList.add('hidden');
+                    menuButton.classList.add('hidden');
+                    appContainer.innerHTML = `
+                        <div class="flex flex-col items-center justify-center min-h-[70vh] p-8 text-center">
+                            <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-sky-500"></div>
+                            <p class="text-slate-600 text-xl mt-6 font-semibold">Verificando...</p>
+                        </div>`;
+                    break;
+                
+                case 'DESLOGADO':
+                    // Mostra tela de login (que agora é só um erro, pois o 'anônimo' deve pegar)
+                    header.classList.add('hidden');
+                    sidebar.classList.add('hidden');
+                    menuButton.classList.add('hidden');
+                    appContainer.innerHTML = renderErrorScreen();
+                    break;
+                
+                case 'LOGADO':
+                    // Mostra o app normal
+                    header.classList.remove('hidden');
+                    sidebar.classList.remove('hidden'); 
+                    menuButton.classList.remove('hidden');
+                
+                    document.getElementById('header-date').innerText = todayFullDate;
 
-            switch (currentPage) {
-                case 'main':
-                    appContainer.innerHTML = renderMainDashboard();
-                    renderTodayJournalEntry(); 
-                    break;
-                case 'routineStats':
-                    appContainer.innerHTML = renderRoutineStats();
-                    break;
-                case 'journalView':
-                    appContainer.innerHTML = renderJournalView();
-                    break;
-                case 'taskCalendar':
-                    appContainer.innerHTML = renderTaskCalendar();
-                    break;
-                case 'goalView':
-                    appContainer.innerHTML = renderGoalView();
+                    switch (currentPage) {
+                        case 'main':
+                            appContainer.innerHTML = renderMainDashboard();
+                            renderTodayJournalEntry(); 
+                            break;
+                        case 'routineStats':
+                            appContainer.innerHTML = renderRoutineStats();
+                            break;
+                        case 'journalView':
+                            appContainer.innerHTML = renderJournalView();
+                            break;
+                        case 'taskCalendar':
+                            appContainer.innerHTML = renderTaskCalendar();
+                            break;
+                        case 'goalView':
+                            appContainer.innerHTML = renderGoalView();
+                            break;
+                    }
                     break;
             }
+            // --- FIM DA LÓGICA CONDICIONAL ---
             
             // Adiciona a versão e o status de login ao menu
             const versionEl = document.getElementById('version-number');
@@ -486,9 +516,25 @@
             }
         }
         
+        function renderErrorScreen() {
+             let errorMessage = authError ? authError.message : "Ocorreu um erro desconhecido.";
+             if (authError && authError.code === 'auth/operation-not-allowed') {
+                errorMessage = "Erro: O login anônimo não está ativado no painel do Firebase. Siga o guia para ativá-lo.";
+             }
+             
+             return `
+                <div class="flex flex-col items-center justify-center min-h-[70vh] p-8 text-center">
+                    <i data-lucide="alert-triangle" class="w-24 h-24 text-rose-500 mb-6"></i>
+                    <h1 class="text-4xl font-bold text-slate-800 mb-3">Erro na Autenticação</h1>
+                    <p class="text-lg text-slate-600 mb-10 max-w-md">${errorMessage}</p>
+                    <p class="text-sm text-slate-500 mt-10">Versão: ${appVersion}</p>
+                </div>
+            `;
+        }
+
         function renderMainDashboard() {
-            // Se os dados ainda não carregaram, mostra um spinner
-            if (!currentUser) {
+            // Se os dados ainda não carregaram (mas o usuário sim), mostra um spinner
+            if (!currentUser) { // Esta é a verificação de segurança
                 return `
                     <div class="flex flex-col items-center justify-center min-h-[70vh] p-8 text-center">
                         <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-sky-500"></div>
