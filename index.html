@@ -28,7 +28,9 @@
             GoogleAuthProvider,
             signInWithRedirect, 
             getRedirectResult,  
-            signOut
+            signOut,
+            signInAnonymously, // <-- NOVO
+            linkWithRedirect // <-- NOVO (para vincular contas)
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { 
             getFirestore, 
@@ -48,7 +50,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "1.2.2"; // Atualizado com sua lógica
+        const appVersion = "1.3.0"; // Login Anônimo
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -66,6 +68,7 @@
         
         let db, auth, userId, appId;
         let dbPathPrefix = '';
+        let currentUser = null; // <-- Guarda o usuário atual
 
         // Arrays para guardar os dados do Firestore
         let allRoutines = [];
@@ -78,8 +81,6 @@
         let unsubscribes = []; 
 
         // Estado da UI
-        let authState = 'VERIFICANDO'; // 'VERIFICANDO', 'LOGADO', 'DESLOGADO'
-        let authError = null; // Para guardar erros de login
         let currentPage = 'main'; 
         let currentModal = null; 
         let currentCalendarDate = new Date();
@@ -186,22 +187,29 @@
             render(); // Renderiza o estado inicial (loading spinner)
         });
 
-        // --- LÓGICA DE LOGIN ATUALIZADA (v1.2.2) ---
-        // Esta função só lida com MUDANÇAS (ex: Logout)
-        function setupAuthListener() {
-            onAuthStateChanged(auth, (user) => {
-                // Se o usuário for nulo E o estado anterior era LOGADO,
-                // significa que um logout acabou de acontecer.
-                if (!user && authState === 'LOGADO') {
-                    console.log("🔄 Evento de Logout detectado.");
-                    authState = 'DESLOGADO';
-                    authError = null;
-                    clearAllData();
-                    unsubscribes.forEach(unsub => unsub());
-                    unsubscribes = [];
-                    render();
-                }
-            });
+        // --- LÓGICA DE LOGIN ATUALIZADA (v1.3.0) ---
+        function setLoggedInState(user) {
+            if (!user) {
+                // Se o usuário for nulo (ex: logout), tenta logar anonimamente
+                signInAnonymously(auth).catch(err => {
+                    console.error("Erro ao logar anonimamente:", err);
+                    document.getElementById('app-container').innerHTML = `<p class="text-red-500 p-4">Erro ao conectar com a autenticação.</p>`;
+                });
+                return;
+            }
+            
+            console.log("Usuário autenticado:", user.uid, user.isAnonymous ? "(Anônimo)" : `(${user.email})`);
+            currentUser = user;
+            userId = user.uid;
+            dbPathPrefix = `/artifacts/${appId}/users/${userId}`;
+            
+            // Verifica se o db precisa ser reinicializado (após logout)
+            if (!db) {
+                db = getFirestore(initializeApp(firebaseConfig));
+            }
+            
+            loadAllData();
+            render();
         }
 
         async function initializeAppFirebase() {
@@ -210,9 +218,7 @@
 
                 if (!firebaseConfig.apiKey || firebaseConfig.apiKey === "SUA_CHAVE_API_SECRETA_COLE_AQUI") {
                     console.error("Configuração do Firebase não encontrada. Cole o seu objeto firebaseConfig.");
-                    authState = 'DESLOGADO';
-                    authError = { message: "Chave API não encontrada. Edite o arquivo HTML e cole sua chave API." };
-                    render();
+                    document.getElementById('app-container').innerHTML = `<p class="text-red-500 p-4">Erro: Chave API não encontrada. Edite o arquivo HTML e cole sua chave API.</p>`;
                     return;
                 }
 
@@ -222,78 +228,55 @@
                 
                 await setPersistence(auth, browserLocalPersistence);
 
-                console.log("Firebase inicializado. Verificando estado de autenticação...");
-                
-                // 1. Tenta pegar o resultado do redirect
+                console.log("Firebase inicializado. Configurando listener de autenticação...");
+
+                // Tenta pegar o resultado de um LINK (vincular conta)
                 try {
-                    console.log("Verificando redirect...");
                     const result = await getRedirectResult(auth);
-                    
                     if (result) {
-                        // Sucesso! Usuário logou via redirect.
-                        console.log("✅ Login via redirect:", result.user.email);
-                        userId = result.user.uid;
-                        authState = 'LOGADO';
-                        dbPathPrefix = `/artifacts/${appId}/users/${userId}`;
-                        loadAllData();
-                        render();
-                        setupAuthListener(); // Configura o listener para logout futuro
-                        return; // FIM
+                        console.log("✅ Contas vinculadas com sucesso!", result.user.email);
+                        // O onAuthStateChanged vai lidar com o novo estado
                     }
-                } catch (error) {
-                    // Erro no redirect (unauthorized-domain, etc)
-                    console.error("❌ Erro no getRedirectResult:", error);
-                    authState = 'DESLOGADO';
-                    authError = error;
-                    render();
-                    setupAuthListener(); // Configura o listener para login futuro
-                    return; // FIM
+                } catch(error) {
+                    console.error("Erro ao vincular contas:", error);
+                    // O onAuthStateChanged vai lidar com o estado antigo (anônimo)
                 }
 
-                // 2. Sem redirect. Verifica a sessão (usuário já logado)
-                console.log("Sem redirect. Verificando sessão (auth.currentUser)...");
-                if (auth.currentUser) {
-                    console.log("✅ Login via Sessão:", auth.currentUser.email);
-                    userId = auth.currentUser.uid;
-                    authState = 'LOGADO';
-                    dbPathPrefix = `/artifacts/${appId}/users/${userId}`;
-                    loadAllData();
-                    render();
-                    setupAuthListener(); // Configura o listener para logout futuro
-                    return; // FIM
-                }
-
-                // 3. Sem redirect E sem sessão. Estamos deslogados.
-                console.log("❌ Deslogado.");
-                authState = 'DESLOGADO';
-                clearAllData();
-                render();
-                setupAuthListener(); // Configura o listener para login futuro
-                // --- FIM DA LÓGICA DE LOGIN ---
+                // Listener principal: Lida com login, logout, e login anônimo
+                onAuthStateChanged(auth, setLoggedInState);
 
             } catch (error) {
                 console.error("Erro ao inicializar Firebase:", error);
-                authState = 'DESLOGADO';
-                authError = error;
-                render();
+                document.getElementById('app-container').innerHTML = `<p class="text-red-500 p-4">Erro ao conectar com o banco de dados.</p>`;
             }
         }
         
         // --- FUNÇÕES DE LOGIN / LOGOUT ---
         
-        async function handleGoogleLogin() {
-            authError = null;
-            render(); // Limpa erros antigos
-        
+        async function handleGoogleLoginOrLink() {
             const provider = new GoogleAuthProvider();
+            
+            if (!auth.currentUser) {
+                 console.error("Nenhum usuário. Isso não deveria acontecer.");
+                 return;
+            }
+
             try {
-                await signInWithRedirect(auth, provider);
-                // A página será redirecionada
+                if (auth.currentUser.isAnonymous) {
+                    // 1. Usuário é anônimo -> Vincula a conta
+                    console.log("Vinculando conta anônima com Google...");
+                    await linkWithRedirect(auth.currentUser, provider);
+                } else {
+                    // 2. Usuário já tem conta (mas não Google?) -> Loga
+                    console.log("Iniciando login com Google...");
+                    await signInWithRedirect(auth, provider);
+                }
             } catch (error) {
-                console.error("Erro ao iniciar login com Google:", error);
-                authState = 'DESLOGADO';
-                authError = error;
-                render();
+                console.error("Erro ao iniciar login/vinculação com Google:", error);
+                if (error.code === 'auth/credential-already-in-use') {
+                    // TODO: Lidar com erro de conta já existente
+                    console.warn("Esta conta Google já está em uso.");
+                }
             }
         }
         
@@ -307,15 +290,15 @@
                     db = null; 
                 }
                 
-                await signOut(auth);
-                // O 'onAuthStateChanged' (configurado em setupAuthListener)
-                // vai pegar o evento de logout e atualizar a UI.
+                // Salva o ID anônimo antes de deslogar
+                const oldUserId = userId; 
                 
-                // Reinicia o estado local (redundante, mas seguro)
-                clearAllData();
-                authState = 'DESLOGADO';
-                userId = null;
-                render(); 
+                await signOut(auth);
+                
+                // O 'onAuthStateChanged' vai pegar o logout (user=null)
+                // e vai chamar o setLoggedInState, que por sua vez
+                // vai logar o usuário anonimamente DE NOVO.
+                console.log(`Logout da conta ${oldUserId} completo. Logando anonimamente...`);
 
             } catch (error) {
                 console.error("Erro ao fazer logout:", error);
@@ -395,61 +378,62 @@
             
             if (!appContainer || !header || !sidebar || !menuButton) return;
             
-            // --- LÓGICA DE RENDERIZAÇÃO ATUALIZADA ---
-            switch(authState) {
-                case 'VERIFICANDO':
-                    // Mostra spinner
-                    header.classList.add('hidden');
-                    sidebar.classList.add('hidden');
-                    menuButton.classList.add('hidden');
-                    appContainer.innerHTML = `
-                        <div class="flex flex-col items-center justify-center min-h-[70vh] p-8 text-center">
-                            <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-sky-500"></div>
-                            <p class="text-slate-600 text-xl mt-6 font-semibold">Verificando login...</p>
-                        </div>`;
-                    break;
-                
-                case 'DESLOGADO':
-                    // Mostra tela de login
-                    header.classList.add('hidden');
-                    sidebar.classList.add('hidden');
-                    menuButton.classList.add('hidden');
-                    appContainer.innerHTML = renderLoginScreen();
-                    break;
-                
-                case 'LOGADO':
-                    // Mostra o app normal
-                    header.classList.remove('hidden');
-                    sidebar.classList.remove('hidden'); 
-                    menuButton.classList.remove('hidden');
-                
-                    document.getElementById('header-date').innerText = todayFullDate;
+            // --- LÓGICA DE RENDERIZAÇÃO ATUALIZADA (v1.3.0) ---
+            // Removemos o 'authState', pois o app só é renderizado
+            // DEPOIS que o setLoggedInState é chamado.
+            // O app sempre assume que está "logado" (seja anônimo ou real)
+            
+            header.classList.remove('hidden');
+            sidebar.classList.remove('hidden'); 
+            menuButton.classList.remove('hidden');
+        
+            document.getElementById('header-date').innerText = todayFullDate;
 
-                    switch (currentPage) {
-                        case 'main':
-                            appContainer.innerHTML = renderMainDashboard();
-                            renderTodayJournalEntry(); 
-                            break;
-                        case 'routineStats':
-                            appContainer.innerHTML = renderRoutineStats();
-                            break;
-                        case 'journalView':
-                            appContainer.innerHTML = renderJournalView();
-                            break;
-                        case 'taskCalendar':
-                            appContainer.innerHTML = renderTaskCalendar();
-                            break;
-                        case 'goalView':
-                            appContainer.innerHTML = renderGoalView();
-                            break;
-                    }
+            switch (currentPage) {
+                case 'main':
+                    appContainer.innerHTML = renderMainDashboard();
+                    renderTodayJournalEntry(); 
+                    break;
+                case 'routineStats':
+                    appContainer.innerHTML = renderRoutineStats();
+                    break;
+                case 'journalView':
+                    appContainer.innerHTML = renderJournalView();
+                    break;
+                case 'taskCalendar':
+                    appContainer.innerHTML = renderTaskCalendar();
+                    break;
+                case 'goalView':
+                    appContainer.innerHTML = renderGoalView();
                     break;
             }
+            
             // --- FIM DA LÓGICA CONDICIONAL ---
             
-            // Adiciona a versão ao menu
+            // Adiciona a versão e o status de login ao menu
             const versionEl = document.getElementById('version-number');
+            const authButtonEl = document.getElementById('auth-button-container');
+            const authUserEl = document.getElementById('auth-user-display');
+            
             if (versionEl) versionEl.innerText = `v${appVersion}`;
+            
+            if (authButtonEl && authUserEl && currentUser) {
+                if (currentUser.isAnonymous) {
+                    authUserEl.innerText = "Usuário: Anônimo (Não Sincronizado)";
+                    authButtonEl.innerHTML = `
+                         <a href="#" data-action="auth-login" class="flex items-center space-x-3 px-4 py-3 text-lg text-emerald-400 hover:bg-slate-800 hover:text-emerald-300 transition-colors duration-200 rounded-lg">
+                            <i data-lucide="shield-check" class=""></i>
+                            <span>Login (Sincronizar)</span>
+                        </a>`;
+                } else {
+                    authUserEl.innerText = `Usuário: ${currentUser.displayName || currentUser.email}`;
+                    authButtonEl.innerHTML = `
+                         <a href="#" data-action="auth-logout" class="flex items-center space-x-3 px-4 py-3 text-lg text-rose-400 hover:bg-slate-800 hover:text-rose-300 transition-colors duration-200 rounded-lg">
+                            <i data-lucide="log-out" class=""></i>
+                            <span>Sair (Logout)</span>
+                        </a>`;
+                }
+            }
 
             renderModal();
             
@@ -458,35 +442,18 @@
             }
         }
         
-        function renderLoginScreen() {
-             // Mostra a mensagem de erro, se houver
-             let errorMessage = '';
-             if (authError) {
-                 console.log("Renderizando com erro:", authError.code);
-                 if (authError.code === 'auth/unauthorized-domain') {
-                     errorMessage = "Erro: Este domínio (`fabioyshiaki.github.io`) não está autorizado. Siga o 'Guia - Autorizar Domínio' no Firebase.";
-                 } else {
-                     errorMessage = `Erro: ${authError.message}`;
-                 }
-             }
-        
-             return `
-                <div class="flex flex-col items-center justify-center min-h-[70vh] p-8 text-center">
-                    <i data-lucide="brain" class="w-24 h-24 text-sky-500 mb-6"></i>
-                    <h1 class="text-4xl font-bold text-slate-800 mb-3">Bem-vindo ao Foco TDAH</h1>
-                    <p class="text-xl text-slate-600 mb-10 max-w-md">Para salvar seus dados e sincronizar entre dispositivos, faça o login.</p>
-                    <button id="google-login-btn" class="flex items-center justify-center space-x-3 w-full max-w-sm bg-white border border-slate-300 text-slate-700 text-lg font-semibold py-4 px-6 rounded-lg shadow-md hover:shadow-lg transition-all hover:bg-slate-50">
-                        <svg class="w-6 h-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8c-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4C12.955 4 4 12.955 4 24s8.955 20 20 20s20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"></path><path fill="#FF3D00" d="m6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4C16.318 4 9.656 8.337 6.306 14.691z"></path><path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238C29.211 35.091 26.715 36 24 36c-5.202 0-9.619-3.108-11.283-7.446l-6.522 5.025C9.505 39.556 16.227 44 24 44z"></path><path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303c-.792 2.237-2.231 4.166-4.087 5.571l6.19 5.238C39.712 34.421 44 28.134 44 20c0-1.341-.138-2.65-.389-3.917z"></path></svg>
-                        <span>Entrar com Google</span>
-                    </button>
-                    <!-- Local para mostrar erros de login -->
-                    <p id="auth-error-message" class="text-red-600 font-semibold mt-6 text-lg max-w-sm">${errorMessage}</p>
-                    <p class="text-sm text-slate-500 mt-10">Versão: ${appVersion}</p>
-                </div>
-            `;
-        }
+        // TELA DE LOGIN FOI REMOVIDA
 
         function renderMainDashboard() {
+            // Se os dados ainda não carregaram, mostra um spinner
+            if (allRoutines.length === 0 && !userId) {
+                return `
+                    <div class="flex flex-col items-center justify-center min-h-[70vh] p-8 text-center">
+                        <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-sky-500"></div>
+                        <p class="text-slate-600 text-xl mt-6 font-semibold">Carregando dados...</p>
+                    </div>`;
+            }
+        
             return `
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 md:p-6">
                     <!-- 1. Rotinas Diárias -->
@@ -915,16 +882,20 @@
         function setupEventListeners() {
             document.body.addEventListener('click', (e) => {
                 
-                // Listener do Botão de Login (existe antes do resto)
-                if (e.target.closest('#google-login-btn')) {
-                    handleGoogleLogin();
-                    return;
-                }
-                
                 const target = e.target.closest('[data-action]');
                 if (!target) return;
 
                 const action = target.dataset.action;
+                
+                // Ações de Autenticação (novas)
+                if (action === 'auth-login') {
+                    handleGoogleLoginOrLink();
+                    return;
+                }
+                if (action === 'auth-logout') {
+                    handleLogout();
+                    return;
+                }
 
                 // Ações do Menu
                 if (action === 'open-menu') {
@@ -938,12 +909,6 @@
                 if (action.startsWith('nav-')) {
                     // Impede navegação se não estiver logado
                     if (authState !== 'LOGADO') return; 
-                    
-                    // Ação de Logout
-                    if (action === 'nav-logout') {
-                        handleLogout();
-                        return; // Impede o resto da lógica de nav
-                    }
 
                     currentPage = action.split('-')[1];
                     document.getElementById('menu-sidebar').classList.add('-translate-x-full');
@@ -1302,13 +1267,13 @@
                     <span>Ver Objetivos</span>
                 </a>
             </div>
-            <!-- Informações de Versão e Logout -->
+            <!-- Informações de Versão e Login/Logout -->
             <div class="p-4 border-t border-slate-700">
+                 <div id="auth-user-display" class="px-4 py-2 text-sm text-slate-400">Usuário: ...</div>
+                 <div id="auth-button-container">
+                    <!-- O botão de Login/Logout é renderizado aqui -->
+                 </div>
                  <div class="px-4 py-2 text-xs text-slate-500" id="version-number">v...</div>
-                 <a href="#" data-action="nav-logout" class="flex items-center space-x-3 px-4 py-3 text-lg text-rose-400 hover:bg-slate-800 hover:text-rose-300 transition-colors duration-200 rounded-lg">
-                    <i data-lucide="log-out" class=""></i>
-                    <span>Sair (Logout)</span>
-                </a>
             </div>
         </nav>
     </div>
