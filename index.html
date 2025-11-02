@@ -48,7 +48,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "1.2.1"; // Atualizado
+        const appVersion = "1.2.2"; // Atualizado com sua lógica
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -186,6 +186,24 @@
             render(); // Renderiza o estado inicial (loading spinner)
         });
 
+        // --- LÓGICA DE LOGIN ATUALIZADA (v1.2.2) ---
+        // Esta função só lida com MUDANÇAS (ex: Logout)
+        function setupAuthListener() {
+            onAuthStateChanged(auth, (user) => {
+                // Se o usuário for nulo E o estado anterior era LOGADO,
+                // significa que um logout acabou de acontecer.
+                if (!user && authState === 'LOGADO') {
+                    console.log("🔄 Evento de Logout detectado.");
+                    authState = 'DESLOGADO';
+                    authError = null;
+                    clearAllData();
+                    unsubscribes.forEach(unsub => unsub());
+                    unsubscribes = [];
+                    render();
+                }
+            });
+        }
+
         async function initializeAppFirebase() {
             try {
                 appId = firebaseConfig.projectId || 'default-app-id';
@@ -206,54 +224,51 @@
 
                 console.log("Firebase inicializado. Verificando estado de autenticação...");
                 
-                // --- LÓGICA DE LOGIN ATUALIZADA (v1.2.1) ---
-                
-                // 1. Configura o listener.
-                // Se um usuário for encontrado na sessão, ele loga.
-                // Se for null, ele NÃO FAZ NADA ainda, pois pode ser um redirect.
-                const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-                    if (user) {
-                        unsubscribeAuth(); // Desliga o listener, já resolvemos.
-                        console.log("Usuário autenticado (pela sessão ou redirect):", user.displayName);
-                        userId = user.uid;
+                // 1. Tenta pegar o resultado do redirect
+                try {
+                    console.log("Verificando redirect...");
+                    const result = await getRedirectResult(auth);
+                    
+                    if (result) {
+                        // Sucesso! Usuário logou via redirect.
+                        console.log("✅ Login via redirect:", result.user.email);
+                        userId = result.user.uid;
                         authState = 'LOGADO';
-                        authError = null;
                         dbPathPrefix = `/artifacts/${appId}/users/${userId}`;
                         loadAllData();
                         render();
+                        setupAuthListener(); // Configura o listener para logout futuro
+                        return; // FIM
                     }
-                });
-
-                // 2. Processa o resultado do redirect
-                try {
-                    const result = await getRedirectResult(auth);
-                    if (result) {
-                        // Sucesso! O listener 'onAuthStateChanged' acima
-                        // já foi (ou será) chamado com o 'user'.
-                        // O 'authState' será 'LOGADO'. Não fazemos nada aqui.
-                        console.log("Redirect processado com sucesso:", result.user.displayName);
-                    } else {
-                        // Sem redirect. Agora checamos o usuário atual.
-                        // Se o onAuthStateChanged já pegou um usuário da sessão,
-                        // 'auth.currentUser' não será nulo.
-                        // Se ambos (sessão e redirect) são nulos, estamos deslogados.
-                        if (auth.currentUser === null) {
-                            console.log("Sem redirect e sem usuário na sessão. Deslogado.");
-                            unsubscribeAuth(); // Desliga o listener
-                            authState = 'DESLOGADO';
-                            authError = null;
-                            clearAllData();
-                            render();
-                        }
-                    }
-                } catch(error) {
-                    // Erro no redirect (ex: unauthorized-domain, conta duplicada, etc)
-                    console.error("Erro ao processar redirect:", error);
-                    unsubscribeAuth(); // Desliga o listener
+                } catch (error) {
+                    // Erro no redirect (unauthorized-domain, etc)
+                    console.error("❌ Erro no getRedirectResult:", error);
                     authState = 'DESLOGADO';
                     authError = error;
                     render();
+                    setupAuthListener(); // Configura o listener para login futuro
+                    return; // FIM
                 }
+
+                // 2. Sem redirect. Verifica a sessão (usuário já logado)
+                console.log("Sem redirect. Verificando sessão (auth.currentUser)...");
+                if (auth.currentUser) {
+                    console.log("✅ Login via Sessão:", auth.currentUser.email);
+                    userId = auth.currentUser.uid;
+                    authState = 'LOGADO';
+                    dbPathPrefix = `/artifacts/${appId}/users/${userId}`;
+                    loadAllData();
+                    render();
+                    setupAuthListener(); // Configura o listener para logout futuro
+                    return; // FIM
+                }
+
+                // 3. Sem redirect E sem sessão. Estamos deslogados.
+                console.log("❌ Deslogado.");
+                authState = 'DESLOGADO';
+                clearAllData();
+                render();
+                setupAuthListener(); // Configura o listener para login futuro
                 // --- FIM DA LÓGICA DE LOGIN ---
 
             } catch (error) {
@@ -293,15 +308,14 @@
                 }
                 
                 await signOut(auth);
+                // O 'onAuthStateChanged' (configurado em setupAuthListener)
+                // vai pegar o evento de logout e atualizar a UI.
                 
-                // Limpa o estado e renderiza a tela de login
+                // Reinicia o estado local (redundante, mas seguro)
                 clearAllData();
                 authState = 'DESLOGADO';
                 userId = null;
                 render(); 
-                
-                // Re-inicializa para que a tela de login funcione
-                initializeAppFirebase();
 
             } catch (error) {
                 console.error("Erro ao fazer logout:", error);
