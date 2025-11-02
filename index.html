@@ -48,27 +48,56 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "1.5.2"; // Corrige o erro de digitação do appId
+        const appVersion = "1.6.0 (Modo Depuração)"; // Log de Erros Visível
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
         // COLE SUA CHAVE 'apiKey' SECRETA NA LINHA ABAIXO:
         const firebaseConfig = {
-  apiKey: "AIzaSyBUG85P90L8eFjV3-rcI9X7G64v15JpVio",
-  authDomain: "meu-foco-pwa.firebaseapp.com",
-  databaseURL: "https://meu-foco-pwa-default-rtdb.firebaseio.com",
-  projectId: "meu-foco-pwa",
-  storageBucket: "meu-foco-pwa.firebasestorage.app",
-  messagingSenderId: "126519054955",
-  appId: "1:126519054955:web:7576cc1170dc2a17ef972e"
-};
+          apiKey: "AIzaSyBUG85P90L8eFjV3-rcI9X7G64v15JpVio", // <-- COLE SUA CHAVE AQUI
+          authDomain: "meu-foco-pwa.firebaseapp.com",
+          projectId: "meu-foco-pwa",
+          storageBucket: "meu-foco-pwa.firebasestorage.app",
+          messagingSenderId: "126519054955"
+          // A linha "appId" foi REMOVIDA INTENCIONALMENTE para corrigir o bug.
+        };
         // ----------------------------------------------------
+
+        // --- LOG DE DEPURAÇÃO VISUAL ---
+        let debugLog = [];
+        function logEvent(level, message, ...data) {
+            const timestamp = new Date().toLocaleTimeString('pt-BR');
+            let dataString = '';
+            if (data.length > 0) {
+                try {
+                    dataString = data.map(d => (typeof d === 'object' ? JSON.stringify(d) : d)).join(' ');
+                } catch (e) {
+                    dataString = "[Objeto não serializável]";
+                }
+            }
+            
+            const logMessage = `[${timestamp}] [${level}] ${message} ${dataString}`;
+            
+            if (level === 'ERROR') {
+                console.error(logMessage);
+            } else {
+                console.log(logMessage);
+            }
+            
+            debugLog.unshift({ level, message: logMessage });
+            
+            // Se a tela de login estiver visível, atualiza o log
+            if (authState === 'DESLOGADO') {
+                render(); 
+            }
+        }
+        // ----------------------------------
 
         
         let db, auth, userId, appId;
         let dbPathPrefix = '';
-        let currentUser = null; // <-- Guarda o usuário atual
-        let authError = null; // Para guardar erros de login
+        let currentUser = null; 
+        let authError = null; 
 
         // Arrays para guardar os dados do Firestore
         let allRoutines = [];
@@ -77,7 +106,6 @@
         let allTasks = [];
         let allGoals = [];
         
-        // Listeners do Firestore (para desligar no logout)
         let unsubscribes = []; 
 
         // Estado da UI
@@ -175,8 +203,8 @@
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register(swUrl)
-                    .then(registration => console.log('Service Worker registrado com sucesso:', registration.scope))
-                    .catch(error => console.log('Falha no registro do Service Worker:', error));
+                    .then(registration => logEvent('INFO', 'Service Worker registrado', registration.scope))
+                    .catch(error => logEvent('ERROR', 'Falha no registro do Service Worker', error));
             });
         }
 
@@ -188,9 +216,9 @@
             render(); // Renderiza o estado inicial (loading spinner)
         });
 
-        // --- LÓGICA DE LOGIN ATUALIZADA (v1.5.2) ---
+        // --- LÓGICA DE LOGIN ATUALIZADA (v1.6.0) ---
         function setLoggedInState(user) {
-            console.log("...setLoggedInState chamado com:", user ? user.email : "null");
+            logEvent('SUCCESS', 'setLoggedInState: Logado com sucesso.', user.email);
             currentUser = user; 
             userId = user.uid;
             authState = 'LOGADO';
@@ -205,7 +233,7 @@
         }
         
         function setLoggedOutState(error) {
-            console.log("...setLoggedOutState chamado");
+            logEvent('INFO', 'setLoggedOutState: Deslogado.', error || '');
             currentUser = null;
             userId = null;
             authState = 'DESLOGADO';
@@ -221,52 +249,53 @@
                 appId = firebaseConfig.projectId || 'default-app-id';
 
                 if (!firebaseConfig.apiKey || firebaseConfig.apiKey === "SUA_CHAVE_API_SECRETA_COLE_AQUI") {
-                    console.error("Configuração do Firebase não encontrada. Cole o seu objeto firebaseConfig.");
+                    logEvent('ERROR', 'initializeAppFirebase: Chave API não encontrada.');
                     authError = { code: "local-config-error", message: "Chave API não encontrada. Edite o arquivo HTML e cole sua chave API." };
                     authState = 'DESLOGADO';
                     render();
                     return;
                 }
 
+                logEvent('INFO', 'initializeAppFirebase: Inicializando app...');
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
                 
                 await setPersistence(auth, browserLocalPersistence);
 
-                console.log("Firebase inicializado. Verificando estado de autenticação...");
+                logEvent('INFO', 'initializeAppFirebase: Verificando estado de autenticação...');
                 
                 // 1. Tenta pegar o resultado do redirect
                 try {
-                    console.log("Verificando redirect...");
+                    logEvent('INFO', 'Verificando redirect...');
                     const result = await getRedirectResult(auth);
                     
                     if (result) {
                         // Sucesso! Usuário logou via redirect.
-                        console.log("✅ Login via redirect:", result.user.email);
+                        logEvent('SUCCESS', 'Login via redirect:', result.user.email);
                         setLoggedInState(result.user);
                         setupAuthListener(); // Configura o listener para logout futuro
                         return; // FIM
                     }
                 } catch (error) {
                     // Erro no redirect (unauthorized-domain, etc)
-                    console.error("❌ Erro no getRedirectResult:", error.code, error.message);
+                    logEvent('ERROR', 'Erro no getRedirectResult', error.code, error.message);
                     setLoggedOutState(error);
                     setupAuthListener(); // Configura o listener para login futuro
                     return; // FIM
                 }
 
                 // 2. Sem redirect. Verifica a sessão (usuário já logado)
-                console.log("Sem redirect. Verificando sessão (onAuthStateChanged)...");
+                logEvent('INFO', 'Sem redirect. Verificando sessão (onAuthStateChanged)...');
                 const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
                     unsubscribeAuth(); // Só precisamos deste primeiro disparo
                     if (user) {
                         // Usuário já estava logado
-                        console.log("✅ Login via Sessão:", user.email);
+                        logEvent('SUCCESS', 'Login via Sessão:', user.email);
                         setLoggedInState(user);
                     } else {
                         // Sem redirect E sem sessão. Estamos deslogados.
-                        console.log("❌ Deslogado.");
+                        logEvent('INFO', 'Deslogado.');
                         setLoggedOutState(null);
                     }
                     setupAuthListener(); // Configura o listener para logout futuro
@@ -274,7 +303,7 @@
                 // --- FIM DA LÓGICA DE LOGIN ---
 
             } catch (error) {
-                console.error("Erro ao inicializar Firebase:", error);
+                logEvent('ERROR', 'Erro ao inicializar Firebase', error.message);
                 setLoggedOutState(error);
             }
         }
@@ -284,7 +313,7 @@
             onAuthStateChanged(auth, (user) => {
                 if (!user && authState === 'LOGADO') {
                     // Usuário acabou de deslogar
-                    console.log("🔄 Evento de Logout detectado.");
+                    logEvent('INFO', 'Evento de Logout detectado.');
                     setLoggedOutState(null);
                 }
             });
@@ -294,6 +323,7 @@
         
         async function handleGoogleLogin() {
             authError = null; // Limpa erros antigos
+            logEvent('INFO', 'handleGoogleLogin: Iniciando signInWithRedirect...');
             render(); 
         
             const provider = new GoogleAuthProvider();
@@ -301,7 +331,7 @@
                 await signInWithRedirect(auth, provider);
                 // A página será redirecionada
             } catch (error) {
-                console.error("Erro ao iniciar login com Google:", error);
+                logEvent('ERROR', 'Erro ao iniciar login com Google', error.code, error.message);
                 setLoggedOutState(error);
             }
         }
@@ -321,7 +351,7 @@
                 // vai pegar o evento de logout e chamar setLoggedOutState.
                 
             } catch (error) {
-                console.error("Erro ao fazer logout:", error);
+                logEvent('ERROR', 'Erro ao fazer logout', error.message);
             }
         }
         
@@ -338,57 +368,57 @@
 
         function loadAllData() {
             if (!userId || !dbPathPrefix) {
-                console.warn("loadAllData chamado sem userId ou dbPathPrefix. Abortando.");
+                logEvent('ERROR', 'loadAllData chamado sem userId ou dbPathPrefix. Abortando.');
                 return;
             }
-            console.log("Carregando dados de:", dbPathPrefix);
+            logEvent('INFO', 'Carregando dados de:', dbPathPrefix);
             
             unsubscribes.forEach(unsub => unsub());
             unsubscribes = [];
 
             if (!db) {
-                console.log("...loadAllData: DB não encontrado, reinicializando...");
+                logEvent('INFO', '...loadAllData: DB não encontrado, reinicializando...');
                 db = getFirestore(initializeApp(firebaseConfig));
             }
             
             const routinesQuery = collection(db, `${dbPathPrefix}/routines`);
             const unsubRoutines = onSnapshot(routinesQuery, (snapshot) => {
                 allRoutines = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                console.log("Rotinas carregadas:", allRoutines.length);
+                logEvent('INFO', `Rotinas carregadas: ${allRoutines.length}`);
                 if (auth.currentUser) render(); // Só renderiza se ainda estiver logado
-            }, (error) => console.error("Erro ao carregar rotinas:", error)); 
+            }, (error) => logEvent('ERROR', "Erro ao carregar rotinas:", error)); 
             unsubscribes.push(unsubRoutines); 
 
             const historyQuery = collection(db, `${dbPathPrefix}/routineHistory`);
             const unsubHistory = onSnapshot(historyQuery, (snapshot) => {
                 routineHistory = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                console.log("Histórico de rotinas carregado:", routineHistory.length);
+                logEvent('INFO', `Histórico de rotinas carregado: ${routineHistory.length}`);
                 if (auth.currentUser) render();
-            }, (error) => console.error("Erro ao carregar histórico:", error));
+            }, (error) => logEvent('ERROR', "Erro ao carregar histórico:", error));
             unsubscribes.push(unsubHistory);
 
             const journalQuery = collection(db, `${dbPathPrefix}/journalEntries`);
             const unsubJournal = onSnapshot(journalQuery, (snapshot) => {
                 journalEntries = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                console.log("Entradas do diário carregadas:", journalEntries.length);
+                logEvent('INFO', `Entradas do diário carregadas: ${journalEntries.length}`);
                 if (auth.currentUser) render();
-            }, (error) => console.error("Erro ao carregar diário:", error));
+            }, (error) => logEvent('ERROR', "Erro ao carregar diário:", error));
             unsubscribes.push(unsubJournal);
 
             const tasksQuery = collection(db, `${dbPathPrefix}/tasks`);
             const unsubTasks = onSnapshot(tasksQuery, (snapshot) => {
                 allTasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                console.log("Tarefas carregadas:", allTasks.length);
+                logEvent('INFO', `Tarefas carregadas: ${allTasks.length}`);
                 if (auth.currentUser) render();
-            }, (error) => console.error("Erro ao carregar tarefas:", error));
+            }, (error) => logEvent('ERROR', "Erro ao carregar tarefas:", error));
             unsubscribes.push(unsubTasks);
 
             const goalsQuery = collection(db, `${dbPathPrefix}/goals`);
             const unsubGoals = onSnapshot(goalsQuery, (snapshot) => {
                 allGoals = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                console.log("Objetivos carregados:", allGoals.length);
+                logEvent('INFO', `Objetivos carregados: ${allGoals.length}`);
                 if (auth.currentUser) render();
-            }, (error) => console.error("Erro ao carregar objetivos:", error));
+            }, (error) => logEvent('ERROR', "Erro ao carregar objetivos:", error));
             unsubscribes.push(unsubGoals);
         }
 
@@ -488,7 +518,7 @@
              // Mostra a mensagem de erro, se houver
              let errorMessage = '';
              if (authError) {
-                 console.error("RENDERIZANDO ERRO:", authError.code, authError.message);
+                 logEvent('ERROR', "renderLoginScreen: Renderizando erro:", authError.code);
                  if (authError.code === 'auth/unauthorized-domain') {
                      errorMessage = "ERRO: O domínio `fabioyshiaki.github.io` não está na lista de 'Domínios autorizados' no seu painel do Firebase. Siga o Passo 3 do guia.";
                  } else if (authError.code === 'auth/operation-not-allowed') {
@@ -496,9 +526,15 @@
                  } else if (authError.code === 'local-config-error') {
                      errorMessage = `ERRO: ${authError.message}`;
                  } else {
-                     errorMessage = `Erro: ${authError.message}`;
+                     errorMessage = `Erro: ${authError.message} (código: ${authError.code})`;
                  }
              }
+             
+             // --- NOVO: Renderiza o Log de Depuração ---
+             const logHtml = debugLog.map(log => {
+                const color = log.level === 'ERROR' ? 'text-rose-400' : (log.level === 'SUCCESS' ? 'text-emerald-400' : 'text-slate-400');
+                return `<p class="${color} font-mono break-all">${log.message}</p>`;
+             }).join('');
         
              return `
                 <div class="flex flex-col items-center justify-center min-h-[70vh] p-8 text-center">
@@ -512,13 +548,20 @@
                     <!-- Local para mostrar erros de login -->
                     <p id="auth-error-message" class="text-red-600 font-bold mt-6 text-lg max-w-sm">${errorMessage}</p>
                     <p class="text-sm text-slate-500 mt-10">Versão: ${appVersion}</p>
+                    
+                    <!-- NOVO LOG DE DEPURAÇÃO VISÍVEL -->
+                    <div class="mt-6 w-full max-w-sm text-left">
+                        <p class="text-slate-600 font-semibold mb-2">Log de Depuração:</p>
+                        <div id="debug-log" class="text-xs bg-slate-800 text-white p-4 rounded-lg h-48 overflow-y-auto">
+                            ${logHtml.length > 0 ? logHtml : '<p class="text-slate-400">Aguardando eventos...</p>'}
+                        </div>
+                    </div>
                 </div>
             `;
         }
 
         function renderMainDashboard() {
-            // --- CORREÇÃO DO BUG (v1.3.3) ---
-            // A verificação agora é no authState, não no currentUser
+            // Se os dados ainda não carregaram (mas o usuário sim), mostra um spinner
             if (authState !== 'LOGADO') { 
                 return `
                     <div class="flex flex-col items-center justify-center min-h-[70vh] p-8 text-center">
@@ -1053,12 +1096,12 @@
                     currentModal = null;
                     renderModal();
                 } catch (error) {
-                    console.error("Erro ao adicionar rotina:", error);
+                    logEvent('ERROR', 'Erro ao adicionar rotina:', error.message);
                 }
             } else if (!name) {
                 console.warn("Nome da rotina está vazio.");
             } else if (!userId) {
-                console.error("Usuário não autenticado. Não é possível salvar.");
+                logEvent('ERROR', 'Usuário não autenticado. Não é possível salvar.');
             }
         }
         
@@ -1076,9 +1119,9 @@
                     });
                     await batch.commit();
                     
-                    console.log("Rotina e histórico deletados.");
+                    logEvent('INFO', "Rotina e histórico deletados.");
                 } catch (error) {
-                    console.error("Erro ao deletar rotina:", error);
+                    logEvent('ERROR', 'Erro ao deletar rotina:', error.message);
                 }
             });
         }
@@ -1101,7 +1144,7 @@
                 }, { merge: true }); 
                 
             } catch (error) {
-                console.error("Erro ao atualizar rotina:", error);
+                logEvent('ERROR', 'Erro ao atualizar rotina:', error.message);
             }
         }
         
@@ -1127,7 +1170,7 @@
                     }, 2000);
                     
                 } catch (error) {
-                    console.error("Erro ao salvar diário:", error);
+                    logEvent('ERROR', 'Erro ao salvar diário:', error.message);
                 }
             }
         }
@@ -1146,7 +1189,7 @@
                     currentModal = null;
                     renderModal();
                 } catch (error) {
-                    console.error("Erro ao adicionar tarefa:", error);
+                    logEvent('ERROR', 'Erro ao adicionar tarefa:', error.message);
                 }
             }
         }
@@ -1160,7 +1203,7 @@
                 });
             } catch (error)
  {
-                console.error("Erro ao completar tarefa:", error);
+                logEvent('ERROR', 'Erro ao completar tarefa:', error.message);
             }
         }
         
@@ -1177,7 +1220,7 @@
                     currentModal = null;
                     renderModal();
                 } catch (error) {
-                    console.error("Erro ao adicionar objetivo:", error);
+                    logEvent('ERROR', 'Erro ao adicionar objetivo:', error.message);
                 }
             }
         }
@@ -1193,7 +1236,7 @@
                     completedAt: new Date().toISOString()
                 });
             } catch (error) {
-                console.error("Erro ao completar objetivo:", error);
+                logEvent('ERROR', 'Erro ao completar objetivo:', error.message);
             }
         }
         
@@ -1203,7 +1246,7 @@
                  try {
                     await deleteDoc(doc(db, `${dbPathPrefix}/goals`, goalId));
                 } catch (error) {
-                    console.error("Erro ao deletar objetivo:", error);
+                    logEvent('ERROR', 'Erro ao deletar objetivo:', error.message);
                 }
             });
         }
