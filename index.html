@@ -70,7 +70,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "2.2.3 (Correção de Bugs Críticos)";
+        const appVersion = "2.3.1 (Correção de Pop-up)";
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -209,7 +209,7 @@
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register(swUrl)
-                    .then(registration => console.log('Service Worker v2.2.3 registrado', registration.scope))
+                    .then(registration => console.log('Service Worker v2.3.1 registrado', registration.scope))
                     .catch(error => console.error('Falha no registro do Service Worker', error));
             });
         }
@@ -227,7 +227,6 @@
             setupEventListeners();
             render(); // Renderiza o estado inicial (loading spinner)
             
-            // CORREÇÃO: Chama o Lucide aqui
             if (typeof lucide !== 'undefined') {
                 lucide.createIcons();
             } else {
@@ -249,10 +248,6 @@
             
             loadAllData();
             render();
-            // CORREÇÃO: Chama o Lucide aqui
-            setTimeout(() => {
-                if (typeof lucide !== 'undefined') lucide.createIcons();
-            }, 50);
         }
         
         function setLoggedOutState(error) {
@@ -265,10 +260,6 @@
             unsubscribes.forEach(unsub => unsub());
             unsubscribes = [];
             render();
-            // CORREÇÃO: Chama o Lucide aqui
-            setTimeout(() => {
-                if (typeof lucide !== 'undefined') lucide.createIcons();
-            }, 50);
         }
 
         async function initializeAppFirebase() {
@@ -521,6 +512,8 @@
                     header.classList.add('hidden');
                     bottomNav.classList.add('hidden');
                     appContainer.innerHTML = renderLoginScreen();
+                    // CORREÇÃO: Chama o attachLoginListener AQUI
+                    attachLoginListener();
                     break;
                 
                 case 'LOGADO':
@@ -1238,9 +1231,9 @@
                     </div>
                 </div>
             `;
+            // NÃO chama o initializeFullCalendar aqui
             return html;
         }
-        
         
         // --- PÁGINA DE OBJETIVOS (v2.2.2 - CORREÇÃO) ---
         function renderGoalStats() {
@@ -1477,13 +1470,10 @@
         // --- Navegação e Event Listeners ---
         
         function setupEventListeners() {
+            // CORREÇÃO v2.3.1: Listener de login movido para uma função separada
+            
+            // Listener principal para AÇÕES
             document.body.addEventListener('click', (e) => {
-                
-                // Listener do Botão de Login
-                if (e.target.closest('#google-login-btn')) {
-                    handleGoogleLogin();
-                    return;
-                }
                 
                 const target = e.target.closest('[data-action]');
                 if (!target) return;
@@ -1593,6 +1583,19 @@
                     handleAddAlert();
                 }
             });
+        }
+        
+        // --- CORREÇÃO v2.3.1 ---
+        // Anexa o listener de login diretamente ao botão
+        function attachLoginListener() {
+             const loginBtn = document.getElementById('google-login-btn');
+             if (loginBtn) {
+                // Remove listener antigo para evitar duplicatas
+                loginBtn.removeEventListener('click', handleGoogleLogin); 
+                // Adiciona o novo listener
+                loginBtn.addEventListener('click', handleGoogleLogin);
+                console.log("Listener de login anexado diretamente ao botão.");
+             }
         }
         
         // --- Funções de Manipulação de Dados (CRUD) ---
@@ -1754,12 +1757,10 @@
                     completed: !isCompleted // Inverte o estado
                 });
                 
-                // Fecha o modal de detalhes, se estiver aberto
+                // CORREÇÃO v2.2.3: Recarrega o modal do dia para mostrar a mudança
                 if (currentModal === 'taskDayView') {
-                    // Recarrega o modal do dia para mostrar a mudança
                     renderModal(); 
                 } else {
-                    // Fecha outros modais (como o de 7 dias)
                     currentModal = null;
                     renderModal();
                 }
@@ -1777,9 +1778,8 @@
                     const taskDocRef = doc(db, `${dbPathPrefix}/tasks`, taskId);
                     await deleteDoc(taskDocRef);
                     
-                    // Fecha o modal de detalhes
+                    // CORREÇÃO v2.2.3: Recarrega o modal do dia para mostrar a mudança
                     if (currentModal === 'taskDayView') {
-                         // Recarrega o modal do dia para mostrar a mudança
                         renderModal();
                     } else {
                         currentModal = null;
@@ -1968,7 +1968,7 @@
                     <!-- Título (agora à esquerda) -->
                     <div class="flex items-center gap-2">
                          <!-- Ícone de Alerta (controlado por JS) -->
-                        <i id="alert-icon" data-lucide="alert-triangle" class="w-6 h-6 text-rose-500 hidden animate-pulse"></i>
+                        <i id="alert-icon" data-lucide="bell" class="w-6 h-6 text-rose-500 hidden animate-pulse"></i>
                         <h1 id="header-title" class="text-2xl font-bold text-slate-900 dark:text-slate-100">Painel Principal</h1>
                     </div>
                     
