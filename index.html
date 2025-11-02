@@ -29,7 +29,6 @@
             signInWithRedirect, 
             getRedirectResult,  
             signOut
-            // Removemos signInAnonymously e linkWithRedirect
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { 
             getFirestore, 
@@ -49,7 +48,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "1.4.0"; // Sem Login Anônimo
+        const appVersion = "1.5.0"; // Modo Depuração de Erro
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -188,7 +187,7 @@
             render(); // Renderiza o estado inicial (loading spinner)
         });
 
-        // --- LÓGICA DE LOGIN ATUALIZADA (v1.4.0) ---
+        // --- LÓGICA DE LOGIN ATUALIZADA (v1.5.0) ---
         function setLoggedInState(user) {
             console.log("...setLoggedInState chamado com:", user ? user.email : "null");
             currentUser = user; 
@@ -222,7 +221,7 @@
 
                 if (!firebaseConfig.apiKey || firebaseConfig.apiKey === "SUA_CHAVE_API_SECRETA_COLE_AQUI") {
                     console.error("Configuração do Firebase não encontrada. Cole o seu objeto firebaseConfig.");
-                    authError = { message: "Chave API não encontrada. Edite o arquivo HTML e cole sua chave API." };
+                    authError = { code: "local-config-error", message: "Chave API não encontrada. Edite o arquivo HTML e cole sua chave API." };
                     authState = 'DESLOGADO';
                     render();
                     return;
@@ -250,7 +249,7 @@
                     }
                 } catch (error) {
                     // Erro no redirect (unauthorized-domain, etc)
-                    console.error("❌ Erro no getRedirectResult:", error);
+                    console.error("❌ Erro no getRedirectResult:", error.code, error.message);
                     setLoggedOutState(error);
                     setupAuthListener(); // Configura o listener para login futuro
                     return; // FIM
@@ -488,9 +487,13 @@
              // Mostra a mensagem de erro, se houver
              let errorMessage = '';
              if (authError) {
-                 console.log("Renderizando com erro:", authError.code);
+                 console.error("RENDERIZANDO ERRO:", authError.code);
                  if (authError.code === 'auth/unauthorized-domain') {
-                     errorMessage = "Erro: Este domínio (`fabioyshiaki.github.io`) não está autorizado. Siga o 'Guia - Autorizar Domínio' no Firebase.";
+                     errorMessage = "ERRO: O domínio `fabioyshiaki.github.io` não está na lista de 'Domínios autorizados' no seu painel do Firebase. Siga o Passo 3 do guia.";
+                 } else if (authError.code === 'auth/operation-not-allowed') {
+                     errorMessage = "ERRO: O login com 'Google' (ou 'Anônimo' nas versões antigas) está desativado no seu painel do Firebase. Siga o Passo 1 do guia.";
+                 } else if (authError.code === 'local-config-error') {
+                     errorMessage = `ERRO: ${authError.message}`;
                  } else {
                      errorMessage = `Erro: ${authError.message}`;
                  }
@@ -506,15 +509,16 @@
                         <span>Entrar com Google</span>
                     </button>
                     <!-- Local para mostrar erros de login -->
-                    <p id="auth-error-message" class="text-red-600 font-semibold mt-6 text-lg max-w-sm">${errorMessage}</p>
+                    <p id="auth-error-message" class="text-red-600 font-bold mt-6 text-lg max-w-sm">${errorMessage}</p>
                     <p class="text-sm text-slate-500 mt-10">Versão: ${appVersion}</p>
                 </div>
             `;
         }
 
         function renderMainDashboard() {
-            // Se os dados ainda não carregaram (mas o usuário sim), mostra um spinner
-            if (!currentUser) { // Esta é a verificação de segurança
+            // --- CORREÇÃO DO BUG (v1.3.3) ---
+            // A verificação agora é no authState, não no currentUser
+            if (authState !== 'LOGADO') { 
                 return `
                     <div class="flex flex-col items-center justify-center min-h-[70vh] p-8 text-center">
                         <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-sky-500"></div>
