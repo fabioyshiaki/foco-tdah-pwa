@@ -21,7 +21,6 @@
     </script>
     
     <!-- Script de Carregamento do Tema (Evita "flash") -->
-    <!-- Este script deve rodar ANTES de tudo -->
     <script>
       // Verifica se o usuário já tem uma preferência salva
       if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
@@ -39,6 +38,9 @@
     <!-- Lucide Icons (para ícones) -->
     <script src="https://unpkg.com/lucide@0.395.0/dist/umd/lucide.min.js"></script>
     
+    <!-- Chart.js (Para os gráficos) -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
     <!-- Firebase SDKs -->
     <script type="module">
         // Importações do Firebase
@@ -49,7 +51,7 @@
             setPersistence,
             browserLocalPersistence,
             GoogleAuthProvider,
-            signInWithPopup,  // <-- Usando Popup
+            signInWithPopup,
             signOut
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { 
@@ -70,7 +72,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "1.9.0 (Dark Mode)"; // Adicionado Modo Escuro
+        const appVersion = "2.0.0 (Gráficos e Diário v2)";
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -83,6 +85,9 @@
           messagingSenderId: "126519054955"
         };
         // ----------------------------------------------------
+        
+        // Objeto global para guardar instâncias dos gráficos
+        window.myCharts = {};
         
         let db, auth, userId, appId;
         let dbPathPrefix = '';
@@ -148,6 +153,7 @@
                 '/',
                 'https://cdn.tailwindcss.com',
                 'https://unpkg.com/lucide@0.395.0/dist/umd/lucide.min.js',
+                'https://cdn.jsdelivr.net/npm/chart.js', // <-- NOVO: Cachear Chart.js
                 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js',
                 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js',
                 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js',
@@ -201,7 +207,7 @@
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register(swUrl)
-                    .then(registration => console.log('Service Worker v1.9.0 registrado', registration.scope))
+                    .then(registration => console.log('Service Worker v2.0.0 registrado', registration.scope))
                     .catch(error => console.error('Falha no registro do Service Worker', error));
             });
         }
@@ -213,13 +219,14 @@
         document.addEventListener('DOMContentLoaded', () => {
             // Define o estado inicial do tema
             currentTheme = document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+            updateChartColors(); // Configura as cores do Chart.js
             
             initializeAppFirebase();
             setupEventListeners();
             render(); // Renderiza o estado inicial (loading spinner)
         });
 
-        // --- LÓGICA DE LOGIN (v1.8.0) ---
+        // --- LÓGICA DE LOGIN ---
         function setLoggedInState(user) {
             console.log("...setLoggedInState chamado com:", user ? user.email : "null");
             currentUser = user; 
@@ -356,7 +363,19 @@
                 document.documentElement.classList.remove('dark');
                 localStorage.theme = 'light';
             }
+            updateChartColors();
             renderThemeToggle(); // Atualiza o botão
+            renderAllCharts(); // Redesenha os gráficos com as novas cores
+        }
+        
+        function updateChartColors() {
+             if (typeof Chart === 'undefined') return;
+             const isDark = document.documentElement.classList.contains('dark');
+             // Cores do Tailwind
+             // light: text-slate-500 (grid), text-slate-800 (ticks)
+             // dark: text-slate-400 (grid), text-slate-100 (ticks)
+             Chart.defaults.color = isDark ? '#94a3b8' : '#334155';
+             Chart.defaults.borderColor = isDark ? '#334155' : '#e2e8f0';
         }
 
         function renderThemeToggle() {
@@ -400,10 +419,10 @@
             }, (error) => console.error("Erro ao carregar rotinas:", error)); 
             unsubscribes.push(unsubRoutines); 
 
-            // ... (demais listeners de dados) ...
             const historyQuery = collection(db, `${dbPathPrefix}/routineHistory`);
             const unsubHistory = onSnapshot(historyQuery, (snapshot) => {
                 routineHistory = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                console.log("Histórico de rotinas carregado:", routineHistory.length);
                 if (auth.currentUser) render();
             }, (error) => console.error("Erro ao carregar histórico:", error));
             unsubscribes.push(unsubHistory);
@@ -411,6 +430,7 @@
             const journalQuery = collection(db, `${dbPathPrefix}/journalEntries`);
             const unsubJournal = onSnapshot(journalQuery, (snapshot) => {
                 journalEntries = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                console.log("Entradas do diário carregadas:", journalEntries.length);
                 if (auth.currentUser) render();
             }, (error) => console.error("Erro ao carregar diário:", error));
             unsubscribes.push(unsubJournal);
@@ -418,6 +438,7 @@
             const tasksQuery = collection(db, `${dbPathPrefix}/tasks`);
             const unsubTasks = onSnapshot(tasksQuery, (snapshot) => {
                 allTasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                console.log("Tarefas carregadas:", allTasks.length);
                 if (auth.currentUser) render();
             }, (error) => console.error("Erro ao carregar tarefas:", error));
             unsubscribes.push(unsubTasks);
@@ -425,6 +446,7 @@
             const goalsQuery = collection(db, `${dbPathPrefix}/goals`);
             const unsubGoals = onSnapshot(goalsQuery, (snapshot) => {
                 allGoals = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                console.log("Objetivos carregados:", allGoals.length);
                 if (auth.currentUser) render();
             }, (error) => console.error("Erro ao carregar objetivos:", error));
             unsubscribes.push(unsubGoals);
@@ -477,6 +499,8 @@
                             break;
                         case 'routineStats':
                             appContainer.innerHTML = renderRoutineStats();
+                            // Renderiza os gráficos DEPOIS que o HTML (canvas) está na página
+                            renderAllCharts();
                             break;
                         case 'journalView':
                             appContainer.innerHTML = renderJournalView();
@@ -514,7 +538,7 @@
                     authButtonEl.innerHTML = ``; // Sem botão de login aqui
                 }
             }
-            
+
             renderThemeToggle(); // Renderiza o botão do tema
             renderModal();
             
@@ -527,9 +551,9 @@
              let errorMessage = '';
              if (authError) {
                  if (authError.code === 'auth/unauthorized-domain') {
-                     errorMessage = "ERRO: O domínio `fabioyshiaki.github.io` não está na lista de 'Domínios autorizados' no seu painel do Firebase. Siga o Passo 3 do guia.";
+                     errorMessage = "ERRO: O domínio `fabioyshiaki.github.io` não está na lista de 'Domínios autorizados' no seu painel do Firebase.";
                  } else if (authError.code === 'auth/operation-not-allowed') {
-                     errorMessage = "ERRO: O login com 'Google' está desativado no seu painel do Firebase. Siga o Passo 1 do guia.";
+                     errorMessage = "ERRO: O login com 'Google' está desativado no seu painel do Firebase.";
                  } else if (authError.code === 'local-config-error') {
                      errorMessage = `ERRO: ${authError.message}`;
                  } else {
@@ -731,55 +755,293 @@
 
         // --- Renderização das Páginas do Menu ---
 
+        // --- PÁGINA DE ESTATÍSTICAS COM GRÁFICOS (v2.0.0) ---
         function renderRoutineStats() {
-            const stats = { week: { completed: 0, total: 0 }, month: { completed: 0, total: 0 }, year: { completed: 0, total: 0 } };
-            const now = new Date();
-            const startOfWeek = new Date(now.setDate(now.getDate() - now.getDay()));
-            startOfWeek.setHours(0,0,0,0);
-            const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-            const startOfYear = new Date(now.getFullYear(), 0, 1);
-
-            routineHistory.forEach(h => {
-                const [year, month, day] = h.date.split('-').map(Number);
-                const entryDate = new Date(year, month - 1, day);
-                
-                if (entryDate >= startOfYear) {
-                    stats.year.total++;
-                    if (h.completed) stats.year.completed++;
-                }
-                if (entryDate >= startOfMonth) {
-                    stats.month.total++;
-                    if (h.completed) stats.month.completed++;
-                }
-                if (entryDate >= startOfWeek) {
-                    stats.week.total++;
-                    if (h.completed) stats.week.completed++;
-                }
-            });
-
+            // Esta função agora apenas desenha os containers dos gráficos
             return `
                 <div class="p-6">
                     <h2 class="text-4xl font-bold text-slate-800 dark:text-slate-100 mb-8">Estatísticas de Rotinas</h2>
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        ${createStatCard("Esta Semana", stats.week.completed, stats.week.total)}
-                        ${createStatCard("Este Mês", stats.month.completed, stats.month.total)}
-                        ${createStatCard("Este Ano", stats.year.completed, stats.year.total)}
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        
+                        <!-- Gráfico de Hoje -->
+                        <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl">
+                            <h3 class="text-2xl font-semibold text-slate-700 dark:text-slate-200 mb-4">Hoje</h3>
+                            <div class="h-64 flex items-center justify-center">
+                                <canvas id="todayChart"></canvas>
+                            </div>
+                        </div>
+                        
+                        <!-- Gráfico da Semana -->
+                        <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl">
+                             <h3 class="text-2xl font-semibold text-slate-700 dark:text-slate-200 mb-4">Últimos 7 Dias</h3>
+                            <div class="h-64">
+                                <canvas id="weekChart"></canvas>
+                            </div>
+                        </div>
+                        
+                        <!-- Gráfico do Mês -->
+                        <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl">
+                             <h3 class="text-2xl font-semibold text-slate-700 dark:text-slate-200 mb-4">Últimas 4 Semanas</h3>
+                            <div class="h-64">
+                                <canvas id="monthChart"></canvas>
+                            </div>
+                        </div>
+                        
+                        <!-- Gráfico do Ano -->
+                        <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl">
+                             <h3 class="text-2xl font-semibold text-slate-700 dark:text-slate-200 mb-4">Este Ano</h3>
+                            <div class="h-64">
+                                <canvas id="yearChart"></canvas>
+                            </div>
+                        </div>
+                        
                     </div>
                 </div>
             `;
         }
         
-        function createStatCard(title, completed, total) {
-            const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
-            return `
-                <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl text-center">
-                    <h3 class="text-2xl font-semibold text-slate-700 dark:text-slate-200">${title}</h3>
-                    <p class="text-6xl font-bold text-sky-600 dark:text-sky-500 my-4">${percentage}%</p>
-                    <p class="text-lg text-slate-500 dark:text-slate-400">${completed} de ${total} concluídas</p>
-                </div>
-            `;
+        // --- NOVAS FUNÇÕES DE GRÁFICOS ---
+        
+        function renderAllCharts() {
+            if (typeof Chart === 'undefined') {
+                 console.error("Chart.js não foi carregado.");
+                 return;
+            }
+            renderTodayChart();
+            renderWeekChart();
+            renderMonthChart();
+            renderYearChart();
+        }
+        
+        function renderTodayChart() {
+            const ctx = document.getElementById('todayChart')?.getContext('2d');
+            if (!ctx) return;
+
+            const todayEntries = routineHistory.filter(h => h.date === todayString);
+            const completed = todayEntries.filter(h => h.completed).length;
+            const total = allRoutines.length;
+            const pending = total - completed;
+
+            if (window.myCharts.todayChart) window.myCharts.todayChart.destroy();
+            
+            window.myCharts.todayChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Concluídas', 'Pendentes'],
+                    datasets: [{
+                        data: [completed, pending < 0 ? 0 : pending],
+                        backgroundColor: [
+                            '#0ea5e9', // sky-500
+                            '#334155'  // slate-700
+                        ],
+                        borderColor: document.documentElement.classList.contains('dark') ? '#1e293b' : '#ffffff', // bg-slate-800 ou bg-white
+                        borderWidth: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: {
+                                padding: 20
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
+        function renderWeekChart() {
+            const ctx = document.getElementById('weekChart')?.getContext('2d');
+            if (!ctx) return;
+
+            const labels = [];
+            const data = [];
+            const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+            const totalRoutines = allRoutines.length > 0 ? allRoutines.length : 1; // Evita divisão por zero
+
+            for (let i = 6; i >= 0; i--) {
+                const date = new Date(todayDate);
+                date.setDate(date.getDate() - i);
+                
+                const dateString = getLocalYYYYMMDD(date);
+                const dayLabel = dayNames[date.getDay()];
+                labels.push(dayLabel);
+                
+                const completed = routineHistory.filter(h => h.date === dateString && h.completed).length;
+                const percentage = (completed / totalRoutines) * 100;
+                data.push(percentage);
+            }
+
+            if (window.myCharts.weekChart) window.myCharts.weekChart.destroy();
+            
+            window.myCharts.weekChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: '% Concluída',
+                        data: data,
+                        backgroundColor: '#0ea5e9', // sky-500
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100,
+                            ticks: {
+                                callback: (value) => `${value}%`
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: { display: false }
+                    }
+                }
+            });
+        }
+        
+        function renderMonthChart() {
+            const ctx = document.getElementById('monthChart')?.getContext('2d');
+            if (!ctx) return;
+            
+            const labels = ['Sem 4', 'Sem 3', 'Sem 2', 'Sem 1 (Atual)'];
+            const data = [];
+            const totalRoutines = allRoutines.length > 0 ? allRoutines.length : 1;
+
+            for (let w = 3; w >= 0; w--) {
+                const weekStart = new Date(todayDate);
+                weekStart.setDate(weekStart.getDate() - (w * 7) - todayDate.getDay()); // Início da semana (Dom)
+                
+                let completedCount = 0;
+                let dayCount = 0;
+                
+                for (let d = 0; d < 7; d++) {
+                    const date = new Date(weekStart);
+                    date.setDate(date.getDate() + d);
+                    const dateString = getLocalYYYYMMDD(date);
+                    
+                    // Só conta dias até "hoje"
+                    if (date <= todayDate) {
+                        const entries = routineHistory.filter(h => h.date === dateString && h.completed);
+                        completedCount += entries.length;
+                        dayCount++;
+                    }
+                }
+                
+                const totalPossible = dayCount * totalRoutines;
+                const percentage = totalPossible > 0 ? (completedCount / totalPossible) * 100 : 0;
+                data.push(percentage);
+            }
+
+            if (window.myCharts.monthChart) window.myCharts.monthChart.destroy();
+            
+            window.myCharts.monthChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: '% Concluída',
+                        data: data,
+                        backgroundColor: '#0ea5e9',
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100,
+                            ticks: {
+                                callback: (value) => `${value}%`
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: { display: false }
+                    }
+                }
+            });
+        }
+        
+        function renderYearChart() {
+            const ctx = document.getElementById('yearChart')?.getContext('2d');
+            if (!ctx) return;
+
+            const labels = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+            const data = Array(12).fill(0);
+            const daysInMonth = Array(12).fill(0).map((_, i) => new Date(todayDate.getFullYear(), i + 1, 0).getDate());
+            const totalRoutines = allRoutines.length > 0 ? allRoutines.length : 1;
+            const currentYear = todayDate.getFullYear();
+            const currentMonth = todayDate.getMonth();
+
+            const yearEntries = routineHistory.filter(h => h.date.startsWith(currentYear));
+
+            yearEntries.forEach(h => {
+                const month = parseInt(h.date.split('-')[1], 10) - 1; // 0-11
+                if (h.completed) {
+                    data[month]++;
+                }
+            });
+            
+            // Calcula porcentagem
+            const percentageData = data.map((completedCount, month) => {
+                let totalDaysInMonth = daysInMonth[month];
+                // Se for o mês atual, conta apenas os dias até hoje
+                if(month === currentMonth) {
+                    totalDaysInMonth = todayDate.getDate();
+                }
+                // Se for mês futuro, zera
+                if (month > currentMonth) {
+                    totalDaysInMonth = 0;
+                }
+                
+                const totalPossible = totalDaysInMonth * totalRoutines;
+                return totalPossible > 0 ? (completedCount / totalPossible) * 100 : 0;
+            });
+
+            if (window.myCharts.yearChart) window.myCharts.yearChart.destroy();
+            
+            window.myCharts.yearChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: '% Concluída',
+                        data: percentageData,
+                        backgroundColor: '#0ea5e9',
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100,
+                            ticks: {
+                                callback: (value) => `${value}%`
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: { display: false }
+                    }
+                }
+            });
         }
 
+
+        // --- DIÁRIO COM ACORDEÃO (v2.0.0) ---
         function renderJournalView() {
             const entriesByMonth = {};
             journalEntries.forEach(entry => {
@@ -793,7 +1055,7 @@
 
             const sortedMonths = Object.keys(entriesByMonth).sort().reverse();
             
-            let html = `<div class="p-6"><h2 class="text-4xl font-bold text-slate-800 dark:text-slate-100 mb-8">Meu Diário</h2><div class="space-y-8">`;
+            let html = `<div class="p-6"><h2 class="text-4xl font-bold text-slate-800 dark:text-slate-100 mb-8">Meu Diário</h2><div class="space-y-4">`;
 
             if (sortedMonths.length === 0) {
                  html += `<p class="text-slate-500 dark:text-slate-400 text-center mt-8 text-lg">Nenhuma entrada no diário ainda.</p>`;
@@ -803,9 +1065,12 @@
                 const [year, month] = monthKey.split('-');
                 const monthName = new Date(year, month - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
                 
-                html += `<div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl">
-                            <h3 class="text-3xl font-semibold text-sky-700 dark:text-sky-500 mb-5 capitalize">${monthName}</h3>
-                            <div class="space-y-5">`;
+                html += `<div class="bg-white dark:bg-slate-800 rounded-2xl shadow-xl overflow-hidden">
+                            <button data-action="toggle-month" data-month-id="month-${monthKey}" class="w-full flex justify-between items-center p-6">
+                                <h3 class="text-3xl font-semibold text-sky-700 dark:text-sky-500 capitalize">${monthName}</h3>
+                                <i data-lucide="chevron-down" class="text-slate-500 transition-transform"></i>
+                            </button>
+                            <div id="month-${monthKey}" class="hidden space-y-5 px-6 pb-6 pt-2 border-t border-slate-200 dark:border-slate-700">`;
                 
                 entriesByMonth[monthKey].sort((a, b) => b.id.localeCompare(a.id)).forEach(entry => {
                     const [y, m, d] = entry.id.split('-').map(Number);
@@ -1010,6 +1275,16 @@
                 // Ação de Mudar Tema
                 if (action === 'toggle-theme') {
                     setTheme(currentTheme === 'light' ? 'dark' : 'light');
+                    return;
+                }
+                
+                // Ação de Acordeão do Diário
+                if (action === 'toggle-month') {
+                    const monthId = target.dataset.monthId;
+                    const content = document.getElementById(monthId);
+                    const icon = target.querySelector('i');
+                    if (content) content.classList.toggle('hidden');
+                    if (icon) icon.classList.toggle('rotate-180');
                     return;
                 }
 
@@ -1307,6 +1582,9 @@
 
     <style>
         /* Estilo base */
+        html.dark body {
+            background-color: #0f172a; /* bg-slate-900 */
+        }
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
         }
@@ -1315,6 +1593,10 @@
         input[type="date"]::-webkit-calendar-picker-indicator {
             display: none;
             -webkit-appearance: none;
+        }
+        /* Cor do texto do input[type=date] no modo escuro */
+        .dark input[type="date"] {
+            color-scheme: dark;
         }
 
         /* Checkbox customizado */
