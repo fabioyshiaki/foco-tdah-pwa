@@ -22,10 +22,12 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { 
             getAuth, 
-            signInAnonymously, 
             onAuthStateChanged,
             setPersistence,
-            browserLocalPersistence
+            browserLocalPersistence,
+            GoogleAuthProvider, // <-- NOVO
+            signInWithPopup,      // <-- NOVO
+            signOut               // <-- NOVO
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { 
             getFirestore, 
@@ -40,19 +42,20 @@
             query, 
             where, 
             writeBatch,
-            getDocs
+            getDocs,
+            terminate // <-- NOVO (para logout)
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
         // COLE SUA CHAVE 'apiKey' SECRETA NA LINHA ABAIXO:
         const firebaseConfig = {
-  apiKey: "AIzaSyBUG85P90L8eFjV3-rcI9X7G64v15JpVio",
-  authDomain: "meu-foco-pwa.firebaseapp.com",
-  projectId: "meu-foco-pwa",
-  storageBucket: "meu-foco-pwa.firebasestorage.app",
-  messagingSenderId: "126519054955",
-  appId: "1:126519054955:web:7576cc1170dc2a17ef972e"
-};
+          apiKey: "AIzaSyBUG85P90L8eFjV3-rcI9X7G64v15JpVio", // <-- COLE SUA CHAVE AQUI
+          authDomain: "meu-foco-pwa.firebaseapp.com",
+          projectId: "meu-foco-pwa",
+          storageBucket: "meu-foco-pwa.firebasestorage.app",
+          messagingSenderId: "126519054955",
+          appId: "1:126519054955:web:7576cc1170dc2a17ef972e"
+        };
         // ----------------------------------------------------
 
         
@@ -65,8 +68,12 @@
         let journalEntries = [];
         let allTasks = [];
         let allGoals = [];
+        
+        // Listeners do Firestore (para desligar no logout)
+        let unsubscribes = []; // <-- NOVO
 
         // Estado da UI
+        let isLoggedIn = false; // <-- NOVO
         let currentPage = 'main'; // main, routineStats, journalView, taskCalendar, goalView
         let currentModal = null; // null, 'addRoutine', 'addTask', 'addGoal'
         let currentCalendarDate = new Date();
@@ -75,7 +82,6 @@
         const todayDate = new Date();
         todayDate.setHours(0, 0, 0, 0); // Zera para meia-noite local
 
-        // Função auxiliar para formatar YYYY-MM-DD local
         function getLocalYYYYMMDD(date) {
             const year = date.getFullYear();
             const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -83,7 +89,7 @@
             return `${year}-${month}-${day}`;
         }
 
-        let todayString = getLocalYYYYMMDD(todayDate); // "YYYY-MM-DD" local
+        let todayString = getLocalYYYYMMDD(todayDate);
         let todayFullDate = new Date().toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' });
         // --- Fim da Fonte de Verdade ---
 
@@ -101,7 +107,7 @@
             "description": "Seu assistente pessoal para rotinas, tarefas e foco.",
             "icons": [
                 { "src": "https://placehold.co/192x192/0ea5e9/white?text=Foco&font=sans-serif", "type": "image/png", "sizes": "192x192" },
-                { "src": "https://placehold.co/512x12/0ea5e9/white?text=Foco&font=sans-serif", "type": "image/png", "sizes": "512x512" }
+                { "src": "https://placehold.co/512x512/0ea5e9/white?text=Foco&font=sans-serif", "type": "image/png", "sizes": "512x512" }
             ]
         };
         const manifestString = JSON.stringify(manifest);
@@ -159,7 +165,7 @@
         document.addEventListener('DOMContentLoaded', () => {
             initializeAppFirebase();
             setupEventListeners();
-            render();
+            render(); // Renderiza o estado inicial (tela de login ou loading)
         });
 
         async function initializeAppFirebase() {
@@ -178,17 +184,24 @@
                 
                 await setPersistence(auth, browserLocalPersistence);
 
-                console.log("Firebase inicializado. AppID (Projeto):", appId);
+                console.log("Firebase inicializado. Aguardando estado de autenticação...");
 
-                onAuthStateChanged(auth, async (user) => {
+                onAuthStateChanged(auth, (user) => {
                     if (user) {
+                        // Usuário está logado
                         userId = user.uid;
-                        console.log("Usuário autenticado:", userId);
+                        isLoggedIn = true;
+                        console.log("Usuário autenticado:", userId, user.displayName);
                         dbPathPrefix = `/artifacts/${appId}/users/${userId}`;
-                        loadAllData();
+                        loadAllData(); // Carrega os dados
+                        render(); // Renderiza o app principal
                     } else {
-                        console.log("Nenhum usuário logado, tentando autenticação...");
-                        await authenticateUser();
+                        // Usuário está deslogado
+                        userId = null;
+                        isLoggedIn = false;
+                        console.log("Nenhum usuário logado.");
+                        clearAllData(); // Limpa dados locais
+                        render(); // Renderiza a tela de login
                     }
                 });
 
@@ -197,15 +210,56 @@
                 document.getElementById('app-container').innerHTML = `<p class="text-red-500 p-4">Erro ao conectar com o banco de dados.</p>`;
             }
         }
-
-        async function authenticateUser() {
+        
+        // --- FUNÇÕES DE LOGIN / LOGOUT ---
+        
+        async function handleGoogleLogin() {
+            const provider = new GoogleAuthProvider();
             try {
-                console.log("Autenticando anonimamente...");
-                await signInAnonymously(auth);
+                await signInWithPopup(auth, provider);
+                // onAuthStateChanged vai lidar com o resto automaticamente
             } catch (error) {
-                console.error("Erro na autenticação:", error);
+                console.error("Erro ao fazer login com Google:", error);
             }
         }
+        
+        async function handleLogout() {
+            try {
+                // Desliga todos os listeners do Firestore
+                unsubscribes.forEach(unsub => unsub());
+                unsubscribes = [];
+                
+                // Desconecta do Firestore
+                if (db) {
+                    await terminate(db);
+                    db = null; // Zera para forçar reinicialização
+                }
+                
+                // Desconecta do Auth
+                await signOut(auth);
+                
+                // Limpa o estado local
+                clearAllData();
+                isLoggedIn = false;
+                userId = null;
+                
+                // Reinicializa o app
+                initializeAppFirebase();
+                render(); // Mostra a tela de login
+
+            } catch (error) {
+                console.error("Erro ao fazer logout:", error);
+            }
+        }
+        
+        function clearAllData() {
+            allRoutines = [];
+            routineHistory = [];
+            journalEntries = [];
+            allTasks = [];
+            allGoals = [];
+        }
+
 
         // --- Carregamento de Dados (Firestore) ---
 
@@ -213,73 +267,106 @@
             if (!userId || !dbPathPrefix) return;
             console.log("Carregando dados de:", dbPathPrefix);
             
+            // Limpa listeners antigos (caso de reconexão)
+            unsubscribes.forEach(unsub => unsub());
+            unsubscribes = [];
+
+            // (Re)inicializa o DB se ele foi terminado no logout
+            if (!db) {
+                db = getFirestore(initializeApp(firebaseConfig));
+            }
+            
             // Carregar Rotinas
             const routinesQuery = collection(db, `${dbPathPrefix}/routines`);
-            onSnapshot(routinesQuery, (snapshot) => {
+            const unsubRoutines = onSnapshot(routinesQuery, (snapshot) => {
                 allRoutines = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 console.log("Rotinas carregadas:", allRoutines.length);
                 render();
             });
+            unsubscribes.push(unsubRoutines); // Salva o listener
 
             // Carregar Histórico de Rotinas
             const historyQuery = collection(db, `${dbPathPrefix}/routineHistory`);
-            onSnapshot(historyQuery, (snapshot) => {
+            const unsubHistory = onSnapshot(historyQuery, (snapshot) => {
                 routineHistory = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 console.log("Histórico de rotinas carregado:", routineHistory.length);
                 render();
             });
+            unsubscribes.push(unsubHistory);
 
             // Carregar Diário
             const journalQuery = collection(db, `${dbPathPrefix}/journalEntries`);
-            onSnapshot(journalQuery, (snapshot) => {
+            const unsubJournal = onSnapshot(journalQuery, (snapshot) => {
                 journalEntries = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 console.log("Entradas do diário carregadas:", journalEntries.length);
                 render();
             });
+            unsubscribes.push(unsubJournal);
 
             // Carregar Tarefas
             const tasksQuery = collection(db, `${dbPathPrefix}/tasks`);
-            onSnapshot(tasksQuery, (snapshot) => {
+            const unsubTasks = onSnapshot(tasksQuery, (snapshot) => {
                 allTasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 console.log("Tarefas carregadas:", allTasks.length);
                 render();
             });
+            unsubscribes.push(unsubTasks);
 
             // Carregar Objetivos
             const goalsQuery = collection(db, `${dbPathPrefix}/goals`);
-            onSnapshot(goalsQuery, (snapshot) => {
+            const unsubGoals = onSnapshot(goalsQuery, (snapshot) => {
                 allGoals = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 console.log("Objetivos carregados:", allGoals.length);
                 render();
             });
+            unsubscribes.push(unsubGoals);
         }
 
         // --- Funções de Renderização (UI) ---
 
         function render() {
             const appContainer = document.getElementById('app-container');
-            if (!appContainer) return;
+            const header = document.getElementById('main-header');
+            const sidebar = document.getElementById('menu-sidebar');
+            const menuButton = document.getElementById('menu-button');
+            
+            if (!appContainer || !header || !sidebar || !menuButton) return;
 
-            document.getElementById('header-date').innerText = todayFullDate;
+            // --- LÓGICA DE RENDERIZAÇÃO CONDICIONAL ---
+            if (!isLoggedIn) {
+                // Se não está logado, mostra tela de login e esconde o resto
+                header.classList.add('hidden');
+                sidebar.classList.add('hidden');
+                menuButton.classList.add('hidden');
+                appContainer.innerHTML = renderLoginScreen();
+            } else {
+                // Se está logado, mostra o app normal
+                header.classList.remove('hidden');
+                sidebar.classList.remove('hidden'); // O estado de "aberto/fechado" é com translate
+                menuButton.classList.remove('hidden');
+            
+                document.getElementById('header-date').innerText = todayFullDate;
 
-            switch (currentPage) {
-                case 'main':
-                    appContainer.innerHTML = renderMainDashboard();
-                    renderTodayJournalEntry(); 
-                    break;
-                case 'routineStats':
-                    appContainer.innerHTML = renderRoutineStats();
-                    break;
-                case 'journalView':
-                    appContainer.innerHTML = renderJournalView();
-                    break;
-                case 'taskCalendar':
-                    appContainer.innerHTML = renderTaskCalendar();
-                    break;
-                case 'goalView':
-                    appContainer.innerHTML = renderGoalView();
-                    break;
+                switch (currentPage) {
+                    case 'main':
+                        appContainer.innerHTML = renderMainDashboard();
+                        renderTodayJournalEntry(); 
+                        break;
+                    case 'routineStats':
+                        appContainer.innerHTML = renderRoutineStats();
+                        break;
+                    case 'journalView':
+                        appContainer.innerHTML = renderJournalView();
+                        break;
+                    case 'taskCalendar':
+                        appContainer.innerHTML = renderTaskCalendar();
+                        break;
+                    case 'goalView':
+                        appContainer.innerHTML = renderGoalView();
+                        break;
+                }
             }
+            // --- FIM DA LÓGICA CONDICIONAL ---
 
             renderModal();
             
@@ -287,6 +374,22 @@
                 lucide.createIcons();
             }
         }
+        
+        // --- NOVA TELA DE LOGIN ---
+        function renderLoginScreen() {
+             return `
+                <div class="flex flex-col items-center justify-center min-h-[70vh] p-8 text-center">
+                    <i data-lucide="brain" class="w-24 h-24 text-sky-500 mb-6"></i>
+                    <h1 class="text-4xl font-bold text-slate-800 mb-3">Bem-vindo ao Foco TDAH</h1>
+                    <p class="text-xl text-slate-600 mb-10 max-w-md">Para salvar seus dados e sincronizar entre dispositivos, faça o login.</p>
+                    <button id="google-login-btn" class="flex items-center justify-center space-x-3 w-full max-w-sm bg-white border border-slate-300 text-slate-700 text-lg font-semibold py-4 px-6 rounded-lg shadow-md hover:shadow-lg transition-all hover:bg-slate-50">
+                        <svg class="w-6 h-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8c-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4C12.955 4 4 12.955 4 24s8.955 20 20 20s20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"></path><path fill="#FF3D00" d="m6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4C16.318 4 9.656 8.337 6.306 14.691z"></path><path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238C29.211 35.091 26.715 36 24 36c-5.202 0-9.619-3.108-11.283-7.446l-6.522 5.025C9.505 39.556 16.227 44 24 44z"></path><path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303c-.792 2.237-2.231 4.166-4.087 5.571l6.19 5.238C39.712 34.421 44 28.134 44 20c0-1.341-.138-2.65-.389-3.917z"></path></svg>
+                        <span>Entrar com Google</span>
+                    </button>
+                </div>
+            `;
+        }
+        // --- FIM DA TELA DE LOGIN ---
 
         function renderMainDashboard() {
             return `
@@ -716,6 +819,13 @@
         
         function setupEventListeners() {
             document.body.addEventListener('click', (e) => {
+                
+                // Listener do Botão de Login (existe antes do resto)
+                if (e.target.closest('#google-login-btn')) {
+                    handleGoogleLogin();
+                    return;
+                }
+                
                 const target = e.target.closest('[data-action]');
                 if (!target) return;
 
@@ -735,6 +845,11 @@
                     document.getElementById('menu-sidebar').classList.add('-translate-x-full');
                     document.getElementById('menu-overlay').classList.add('hidden');
                     render();
+                }
+                
+                // Ação de Logout
+                if (action === 'nav-logout') {
+                    handleLogout();
                 }
 
                 // Ações do Modal
@@ -970,8 +1085,6 @@
             return diffDays < 0 ? 0 : diffDays;
         }
 
-        // *** AQUI ESTÁ A CORREÇÃO ***
-        // Troquei o 'S{message}' que você viu na imagem por '${message}'
         function showConfirmationModal(message, onConfirm) {
             const modalContainer = document.getElementById('modal-container');
             const confirmationId = 'modal-confirm-' + Date.now();
@@ -998,7 +1111,7 @@
             const modalElement = document.getElementById(confirmationId);
 
             const handleConfirmationClick = (e) => {
-                const target = e.g.closest('[data-action]');
+                const target = e.target.closest('[data-action]');
                 if (!target) return;
 
                 if (target.dataset.action === 'confirm-action') {
@@ -1067,38 +1180,47 @@
             <h2 class="text-3xl font-bold text-sky-400">Foco TDAH</h2>
             <p class="text-slate-400 text-sm">Seu assistente</p>
         </div>
-        <nav class="mt-6">
-            <a href="#" data-action="nav-main" class="flex items-center space-x-3 px-6 py-4 text-lg text-slate-200 hover:bg-slate-800 hover:text-white transition-colors duration-200">
-                <i data-lucide="layout-dashboard" class="text-slate-400"></i>
-                <span>Painel Principal</span>
-            </a>
-            <a href="#" data-action="nav-routineStats" class="flex items-center space-x-3 px-6 py-4 text-lg text-slate-200 hover:bg-slate-800 hover:text-white transition-colors duration-200">
-                <i data-lucide="pie-chart" class="text-slate-400"></i>
-                <span>Estatísticas (Rotinas)</span>
-            </a>
-            <a href="#" data-action="nav-journalView" class="flex items-center space-x-3 px-6 py-4 text-lg text-slate-200 hover:bg-slate-800 hover:text-white transition-colors duration-200">
-                <i data-lucide="book-open" class="text-slate-400"></i>
-                <span>Ver Diário</span>
-            </a>
-            <a href="#" data-action="nav-taskCalendar" class="flex items-center space-x-3 px-6 py-4 text-lg text-slate-200 hover:bg-slate-800 hover:text-white transition-colors duration-200">
-                <i data-lucide="calendar-days" class="text-slate-400"></i>
-                <span>Calendário (Tarefas)</span>
-            </a>
-            <a href="#" data-action="nav-goalView" class="flex items-center space-x-3 px-6 py-4 text-lg text-slate-200 hover:bg-slate-800 hover:text-white transition-colors duration-200">
-                <i data-lucide="target" class="text-slate-400"></i>
-                <span>Ver Objetivos</span>
-            </a>
+        <nav class="mt-6 flex flex-col h-[calc(100%-120px)]"> <!-- Ajuste de altura -->
+            <div class="flex-grow"> <!-- Itens do menu -->
+                <a href="#" data-action="nav-main" class="flex items-center space-x-3 px-6 py-4 text-lg text-slate-200 hover:bg-slate-800 hover:text-white transition-colors duration-200">
+                    <i data-lucide="layout-dashboard" class="text-slate-400"></i>
+                    <span>Painel Principal</span>
+                </a>
+                <a href="#" data-action="nav-routineStats" class="flex items-center space-x-3 px-6 py-4 text-lg text-slate-200 hover:bg-slate-800 hover:text-white transition-colors duration-200">
+                    <i data-lucide="pie-chart" class="text-slate-400"></i>
+                    <span>Estatísticas (Rotinas)</span>
+                </a>
+                <a href="#" data-action="nav-journalView" class="flex items-center space-x-3 px-6 py-4 text-lg text-slate-200 hover:bg-slate-800 hover:text-white transition-colors duration-200">
+                    <i data-lucide="book-open" class="text-slate-400"></i>
+                    <span>Ver Diário</span>
+                </a>
+                <a href="#" data-action="nav-taskCalendar" class="flex items-center space-x-3 px-6 py-4 text-lg text-slate-200 hover:bg-slate-800 hover:text-white transition-colors duration-200">
+                    <i data-lucide="calendar-days" class="text-slate-400"></i>
+                    <span>Calendário (Tarefas)</span>
+                </a>
+                <a href="#" data-action="nav-goalView" class="flex items-center space-x-3 px-6 py-4 text-lg text-slate-200 hover:bg-slate-800 hover:text-white transition-colors duration-200">
+                    <i data-lucide="target" class="text-slate-400"></i>
+                    <span>Ver Objetivos</span>
+                </a>
+            </div>
+            <!-- Botão de Sair (Logout) -->
+            <div class="p-4 border-t border-slate-700">
+                 <a href="#" data-action="nav-logout" class="flex items-center space-x-3 px-4 py-3 text-lg text-rose-400 hover:bg-slate-800 hover:text-rose-300 transition-colors duration-200 rounded-lg">
+                    <i data-lucide="log-out" class=""></i>
+                    <span>Sair (Logout)</span>
+                </a>
+            </div>
         </nav>
     </div>
 
     <!-- Conteúdo Principal -->
     <div class="min-h-screen">
         <!-- Header Principal -->
-        <header class="bg-white shadow-md sticky top-0 z-0 border-b border-slate-200">
+        <header id="main-header" class="bg-white shadow-md sticky top-0 z-0 border-b border-slate-200">
             <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div class="flex justify-between items-center h-20">
                     <!-- Botão Menu -->
-                    <button data-action="open-menu" class="text-slate-600 hover:text-sky-600 transition-colors">
+                    <button id="menu-button" data-action="open-menu" class="text-slate-600 hover:text-sky-600 transition-colors">
                         <i data-lucide="menu" class="w-8 h-8"></i>
                     </button>
                     <!-- Data -->
@@ -1114,8 +1236,7 @@
 
         <!-- Container da Página -->
         <main id="app-container" class="pb-24">
-            <!-- O conteúdo da página é renderizado aqui pelo JavaScript -->
-            <!-- Loading Spinner -->
+            <!-- Loading Spinner inicial -->
              <div class="flex justify-center items-center h-64">
                 <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-sky-500"></div>
             </div>
