@@ -25,9 +25,10 @@
             onAuthStateChanged,
             setPersistence,
             browserLocalPersistence,
-            GoogleAuthProvider, // <-- NOVO
-            signInWithPopup,      // <-- NOVO
-            signOut               // <-- NOVO
+            GoogleAuthProvider,
+            signInWithRedirect, // <-- MUDANÇA: Sai 'signInWithPopup'
+            getRedirectResult,  // <-- NOVO: Para capturar o login na volta
+            signOut
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { 
             getFirestore, 
@@ -43,7 +44,7 @@
             where, 
             writeBatch,
             getDocs,
-            terminate // <-- NOVO (para logout)
+            terminate 
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -70,17 +71,17 @@
         let allGoals = [];
         
         // Listeners do Firestore (para desligar no logout)
-        let unsubscribes = []; // <-- NOVO
+        let unsubscribes = []; 
 
         // Estado da UI
-        let isLoggedIn = false; // <-- NOVO
-        let currentPage = 'main'; // main, routineStats, journalView, taskCalendar, goalView
-        let currentModal = null; // null, 'addRoutine', 'addTask', 'addGoal'
+        let isLoggedIn = false; 
+        let currentPage = 'main'; 
+        let currentModal = null; 
         let currentCalendarDate = new Date();
         
         // --- Fonte Única de Verdade para "Hoje" (BASEADO NO LOCAL) ---
         const todayDate = new Date();
-        todayDate.setHours(0, 0, 0, 0); // Zera para meia-noite local
+        todayDate.setHours(0, 0, 0, 0); 
 
         function getLocalYYYYMMDD(date) {
             const year = date.getFullYear();
@@ -184,7 +185,24 @@
                 
                 await setPersistence(auth, browserLocalPersistence);
 
-                console.log("Firebase inicializado. Aguardando estado de autenticação...");
+                console.log("Firebase inicializado. Verificando estado de autenticação...");
+                
+                // --- NOVO: Captura o resultado do redirect ---
+                // Isso precisa ser checado *antes* do onAuthStateChanged
+                try {
+                    console.log("Verificando se há um redirecionamento de login...");
+                    const result = await getRedirectResult(auth);
+                    if (result) {
+                        // Login via redirect foi bem-sucedido.
+                        // O onAuthStateChanged vai lidar com o usuário.
+                        console.log("Login por redirect bem-sucedido:", result.user.displayName);
+                    } else {
+                        console.log("Nenhum redirect encontrado, carregamento normal.");
+                    }
+                } catch(error) {
+                    console.error("Erro ao obter resultado do redirect:", error);
+                }
+                // --- FIM DA MUDANÇA ---
 
                 onAuthStateChanged(auth, (user) => {
                     if (user) {
@@ -216,8 +234,11 @@
         async function handleGoogleLogin() {
             const provider = new GoogleAuthProvider();
             try {
-                await signInWithPopup(auth, provider);
-                // onAuthStateChanged vai lidar com o resto automaticamente
+                // --- MUDANÇA ---
+                // Troca 'signInWithPopup' por 'signInWithRedirect'
+                await signInWithRedirect(auth, provider);
+                // A página será redirecionada, o código abaixo não será executado
+                
             } catch (error) {
                 console.error("Erro ao fazer login com Google:", error);
             }
@@ -841,15 +862,19 @@
                     document.getElementById('menu-overlay').classList.add('hidden');
                 }
                 if (action.startsWith('nav-')) {
+                    // Impede navegação se não estiver logado
+                    if (!isLoggedIn) return; 
+                    
+                    // Ação de Logout
+                    if (action === 'nav-logout') {
+                        handleLogout();
+                        return; // Impede o resto da lógica de nav
+                    }
+
                     currentPage = action.split('-')[1];
                     document.getElementById('menu-sidebar').classList.add('-translate-x-full');
                     document.getElementById('menu-overlay').classList.add('hidden');
                     render();
-                }
-                
-                // Ação de Logout
-                if (action === 'nav-logout') {
-                    handleLogout();
                 }
 
                 // Ações do Modal
