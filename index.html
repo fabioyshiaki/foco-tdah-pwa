@@ -8,6 +8,29 @@
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     
+    <!-- Configuração do Tailwind para Dark Mode -->
+    <script>
+        tailwind.config = {
+          darkMode: 'class', // Habilita o modo escuro baseado em classe (no <html>)
+          theme: {
+            extend: {
+              // Você pode adicionar cores personalizadas aqui se quiser
+            }
+          }
+        }
+    </script>
+    
+    <!-- Script de Carregamento do Tema (Evita "flash") -->
+    <!-- Este script deve rodar ANTES de tudo -->
+    <script>
+      // Verifica se o usuário já tem uma preferência salva
+      if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+        document.documentElement.classList.add('dark')
+      } else {
+        document.documentElement.classList.remove('dark')
+      }
+    </script>
+    
     <!-- Google Font: Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -26,7 +49,7 @@
             setPersistence,
             browserLocalPersistence,
             GoogleAuthProvider,
-            signInWithPopup,  // <-- MUDANÇA
+            signInWithPopup,  // <-- Usando Popup
             signOut
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { 
@@ -47,7 +70,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "1.8.0 (Login com Popup)"; // Mudança de estratégia
+        const appVersion = "1.9.0 (Dark Mode)"; // Adicionado Modo Escuro
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -60,36 +83,6 @@
           messagingSenderId: "126519054955"
         };
         // ----------------------------------------------------
-
-        // --- LOG DE DEPURAÇÃO VISUAL ---
-        let debugLog = [];
-        function logEvent(level, message, ...data) {
-            const timestamp = new Date().toLocaleTimeString('pt-BR');
-            let dataString = '';
-            if (data.length > 0) {
-                try {
-                    dataString = data.map(d => (typeof d === 'object' ? JSON.stringify(d) : d)).join(' ');
-                } catch (e) {
-                    dataString = "[Objeto não serializável]";
-                }
-            }
-            
-            const logMessage = `[${timestamp}] [${level}] ${message} ${dataString}`;
-            
-            if (level === 'ERROR') {
-                console.error(logMessage);
-            } else {
-                console.log(logMessage);
-            }
-            
-            debugLog.unshift({ level, message: logMessage });
-            
-            if (authState === 'DESLOGADO') {
-                render(); 
-            }
-        }
-        // ----------------------------------
-
         
         let db, auth, userId, appId;
         let dbPathPrefix = '';
@@ -110,6 +103,7 @@
         let currentPage = 'main'; 
         let currentModal = null; 
         let currentCalendarDate = new Date();
+        let currentTheme = 'light'; // 'light' ou 'dark'
         
         // --- Fonte Única de Verdade para "Hoje" (BASEADO NO LOCAL) ---
         const todayDate = new Date();
@@ -207,8 +201,8 @@
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register(swUrl)
-                    .then(registration => logEvent('INFO', 'Service Worker v1.8.0 registrado', registration.scope))
-                    .catch(error => logEvent('ERROR', 'Falha no registro do Service Worker', error));
+                    .then(registration => console.log('Service Worker v1.9.0 registrado', registration.scope))
+                    .catch(error => console.error('Falha no registro do Service Worker', error));
             });
         }
         // --- FIM PWA ---
@@ -217,14 +211,17 @@
         // --- Inicialização ---
         
         document.addEventListener('DOMContentLoaded', () => {
+            // Define o estado inicial do tema
+            currentTheme = document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+            
             initializeAppFirebase();
             setupEventListeners();
             render(); // Renderiza o estado inicial (loading spinner)
         });
 
-        // --- LÓGICA DE LOGIN ATUALIZADA (v1.8.0) ---
+        // --- LÓGICA DE LOGIN (v1.8.0) ---
         function setLoggedInState(user) {
-            logEvent('SUCCESS', 'setLoggedInState: Logado com sucesso.', user.email);
+            console.log("...setLoggedInState chamado com:", user ? user.email : "null");
             currentUser = user; 
             userId = user.uid;
             authState = 'LOGADO';
@@ -239,7 +236,7 @@
         }
         
         function setLoggedOutState(error) {
-            logEvent('INFO', 'setLoggedOutState: Deslogado.', error || '');
+            console.log("...setLoggedOutState chamado");
             currentUser = null;
             userId = null;
             authState = 'DESLOGADO';
@@ -255,66 +252,69 @@
                 appId = firebaseConfig.projectId || 'default-app-id';
 
                 if (!firebaseConfig.apiKey || firebaseConfig.apiKey === "SUA_CHAVE_API_SECRETA_COLE_AQUI") {
-                    logEvent('ERROR', 'initializeAppFirebase: Chave API não encontrada.');
+                    console.error("Configuração do Firebase não encontrada.");
                     authError = { code: "local-config-error", message: "Chave API não encontrada. Edite o arquivo HTML e cole sua chave API." };
                     authState = 'DESLOGADO';
                     render();
                     return;
                 }
 
-                logEvent('INFO', 'initializeAppFirebase: Inicializando app...');
+                console.log("Firebase inicializado. Verificando estado de autenticação...");
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
                 
                 await setPersistence(auth, browserLocalPersistence);
-
-                logEvent('INFO', 'initializeAppFirebase: Verificando estado de autenticação...');
                 
-                // LÓGICA DE INICIALIZAÇÃO SIMPLIFICADA (só checa sessão)
+                // Lógica de Popup (v1.8.0) - só checa sessão
                 onAuthStateChanged(auth, (user) => {
                     if (user) {
-                        // Usuário já estava logado
-                        logEvent('SUCCESS', 'Login via Sessão:', user.email);
+                        console.log("✅ Login via Sessão:", user.email);
                         setLoggedInState(user);
                     } else {
-                        // Sem sessão. Estamos deslogados.
-                        logEvent('INFO', 'Deslogado.');
+                        console.log("❌ Deslogado.");
                         setLoggedOutState(null);
                     }
+                    setupAuthListener(); // Configura o listener para logout futuro
                 });
-                // --- FIM DA LÓGICA DE LOGIN ---
 
             } catch (error) {
-                logEvent('ERROR', 'Erro ao inicializar Firebase', error.message);
+                console.error("Erro ao inicializar Firebase:", error);
                 setLoggedOutState(error);
             }
+        }
+        
+        // Listener para mudanças futuras (principalmente logout)
+        function setupAuthListener() {
+            onAuthStateChanged(auth, (user) => {
+                if (!user && authState === 'LOGADO') {
+                    // Usuário acabou de deslogar
+                    console.log("🔄 Evento de Logout detectado.");
+                    setLoggedOutState(null);
+                }
+            });
         }
         
         // --- FUNÇÕES DE LOGIN / LOGOUT ---
         
         async function handleGoogleLogin() {
             authError = null; // Limpa erros antigos
-            logEvent('INFO', 'handleGoogleLogin: Iniciando signInWithPopup...');
             render(); 
         
             const provider = new GoogleAuthProvider();
             try {
-                // --- MUDANÇA PRINCIPAL ---
+                console.log("handleGoogleLogin: Iniciando signInWithPopup...");
                 const result = await signInWithPopup(auth, provider);
-                // -------------------------
                 
                 if (result) {
-                    // Sucesso! O onAuthStateChanged vai ser chamado,
-                    // mas podemos adiantar o processo.
-                    logEvent('SUCCESS', 'Login via Popup:', result.user.email);
+                    console.log("✅ Login via Popup:", result.user.email);
                     setLoggedInState(result.user);
                 } else {
-                    logEvent('WARN', 'Popup fechado sem login.');
+                    console.warn('Popup fechado sem login.');
                     setLoggedOutState(null);
                 }
             } catch (error) {
-                logEvent('ERROR', 'Erro ao logar com Popup', error.code, error.message);
+                console.error("Erro ao logar com Popup", error.code, error.message);
                 setLoggedOutState(error);
             }
         }
@@ -330,10 +330,11 @@
                 }
                 
                 await signOut(auth);
-                // O 'onAuthStateChanged' vai pegar o evento de logout e chamar setLoggedOutState.
+                // O 'onAuthStateChanged' (configurado em setupAuthListener)
+                // vai pegar o evento de logout e chamar setLoggedOutState.
                 
             } catch (error) {
-                logEvent('ERROR', 'Erro ao fazer logout', error.message);
+                console.error("Erro ao fazer logout", error.message);
             }
         }
         
@@ -345,62 +346,87 @@
             allGoals = [];
         }
 
+        // --- FUNÇÕES DE TEMA ---
+        function setTheme(theme) {
+            currentTheme = theme;
+            if (theme === 'dark') {
+                document.documentElement.classList.add('dark');
+                localStorage.theme = 'dark';
+            } else {
+                document.documentElement.classList.remove('dark');
+                localStorage.theme = 'light';
+            }
+            renderThemeToggle(); // Atualiza o botão
+        }
+
+        function renderThemeToggle() {
+            const knob = document.getElementById('theme-toggle-knob');
+            const button = document.getElementById('theme-toggle-button');
+            if (knob && button) {
+                if (currentTheme === 'dark') {
+                    button.classList.replace('bg-slate-600', 'bg-sky-500');
+                    knob.classList.add('translate-x-5');
+                } else {
+                    button.classList.replace('bg-sky-500', 'bg-slate-600');
+                    knob.classList.remove('translate-x-5');
+                }
+            }
+        }
+        // --- FIM FUNÇÕES DE TEMA ---
+
 
         // --- Carregamento de Dados (Firestore) ---
 
         function loadAllData() {
             if (!userId || !dbPathPrefix) {
-                logEvent('ERROR', 'loadAllData chamado sem userId ou dbPathPrefix. Abortando.');
+                console.warn("loadAllData chamado sem userId ou dbPathPrefix. Abortando.");
                 return;
             }
-            logEvent('INFO', 'Carregando dados de:', dbPathPrefix);
+            console.log("Carregando dados de:", dbPathPrefix);
             
             unsubscribes.forEach(unsub => unsub());
             unsubscribes = [];
 
             if (!db) {
-                logEvent('INFO', '...loadAllData: DB não encontrado, reinicializando...');
+                console.log("...loadAllData: DB não encontrado, reinicializando...");
                 db = getFirestore(initializeApp(firebaseConfig));
             }
             
             const routinesQuery = collection(db, `${dbPathPrefix}/routines`);
             const unsubRoutines = onSnapshot(routinesQuery, (snapshot) => {
                 allRoutines = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                logEvent('INFO', `Rotinas carregadas: ${allRoutines.length}`);
+                console.log("Rotinas carregadas:", allRoutines.length);
                 if (auth.currentUser) render(); // Só renderiza se ainda estiver logado
-            }, (error) => logEvent('ERROR', "Erro ao carregar rotinas:", error)); 
+            }, (error) => console.error("Erro ao carregar rotinas:", error)); 
             unsubscribes.push(unsubRoutines); 
 
+            // ... (demais listeners de dados) ...
             const historyQuery = collection(db, `${dbPathPrefix}/routineHistory`);
             const unsubHistory = onSnapshot(historyQuery, (snapshot) => {
                 routineHistory = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                logEvent('INFO', `Histórico de rotinas carregado: ${routineHistory.length}`);
                 if (auth.currentUser) render();
-            }, (error) => logEvent('ERROR', "Erro ao carregar histórico:", error));
+            }, (error) => console.error("Erro ao carregar histórico:", error));
             unsubscribes.push(unsubHistory);
 
             const journalQuery = collection(db, `${dbPathPrefix}/journalEntries`);
             const unsubJournal = onSnapshot(journalQuery, (snapshot) => {
                 journalEntries = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                logEvent('INFO', `Entradas do diário carregadas: ${journalEntries.length}`);
                 if (auth.currentUser) render();
-            }, (error) => logEvent('ERROR', "Erro ao carregar diário:", error));
+            }, (error) => console.error("Erro ao carregar diário:", error));
             unsubscribes.push(unsubJournal);
 
             const tasksQuery = collection(db, `${dbPathPrefix}/tasks`);
             const unsubTasks = onSnapshot(tasksQuery, (snapshot) => {
                 allTasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                logEvent('INFO', `Tarefas carregadas: ${allTasks.length}`);
                 if (auth.currentUser) render();
-            }, (error) => logEvent('ERROR', "Erro ao carregar tarefas:", error));
+            }, (error) => console.error("Erro ao carregar tarefas:", error));
             unsubscribes.push(unsubTasks);
 
             const goalsQuery = collection(db, `${dbPathPrefix}/goals`);
             const unsubGoals = onSnapshot(goalsQuery, (snapshot) => {
                 allGoals = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                logEvent('INFO', `Objetivos carregados: ${allGoals.length}`);
                 if (auth.currentUser) render();
-            }, (error) => logEvent('ERROR', "Erro ao carregar objetivos:", error));
+            }, (error) => console.error("Erro ao carregar objetivos:", error));
             unsubscribes.push(unsubGoals);
         }
 
@@ -424,7 +450,7 @@
                     appContainer.innerHTML = `
                         <div class="flex flex-col items-center justify-center min-h-[70vh] p-8 text-center">
                             <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-sky-500"></div>
-                            <p class="text-slate-600 text-xl mt-6 font-semibold">Verificando login...</p>
+                            <p class="text-slate-600 dark:text-slate-400 text-xl mt-6 font-semibold">Verificando login...</p>
                         </div>`;
                     break;
                 
@@ -488,7 +514,8 @@
                     authButtonEl.innerHTML = ``; // Sem botão de login aqui
                 }
             }
-
+            
+            renderThemeToggle(); // Renderiza o botão do tema
             renderModal();
             
             if (typeof lucide !== 'undefined') {
@@ -497,47 +524,31 @@
         }
         
         function renderLoginScreen() {
-             // Mostra a mensagem de erro, se houver
              let errorMessage = '';
              if (authError) {
-                 logEvent('ERROR', "renderLoginScreen: Renderizando erro:", authError.code);
                  if (authError.code === 'auth/unauthorized-domain') {
                      errorMessage = "ERRO: O domínio `fabioyshiaki.github.io` não está na lista de 'Domínios autorizados' no seu painel do Firebase. Siga o Passo 3 do guia.";
                  } else if (authError.code === 'auth/operation-not-allowed') {
-                     errorMessage = "ERRO: O login com 'Google' (ou 'Anônimo' nas versões antigas) está desativado no seu painel do Firebase. Siga o Passo 1 do guia.";
+                     errorMessage = "ERRO: O login com 'Google' está desativado no seu painel do Firebase. Siga o Passo 1 do guia.";
                  } else if (authError.code === 'local-config-error') {
                      errorMessage = `ERRO: ${authError.message}`;
                  } else {
                      errorMessage = `Erro: ${authError.message} (código: ${authError.code})`;
                  }
              }
-             
-             // --- NOVO: Renderiza o Log de Depuração ---
-             const logHtml = debugLog.map(log => {
-                const color = log.level === 'ERROR' ? 'text-rose-400' : (log.level === 'SUCCESS' ? 'text-emerald-400' : 'text-slate-400');
-                return `<p class="${color} font-mono break-all">${log.message}</p>`;
-             }).join('');
         
              return `
                 <div class="flex flex-col items-center justify-center min-h-[70vh] p-8 text-center">
                     <i data-lucide="brain" class="w-24 h-24 text-sky-500 mb-6"></i>
-                    <h1 class="text-4xl font-bold text-slate-800 mb-3">Bem-vindo ao Foco TDAH</h1>
-                    <p class="text-xl text-slate-600 mb-10 max-w-md">Para salvar seus dados e sincronizar entre dispositivos, faça o login.</p>
-                    <button id="google-login-btn" class="flex items-center justify-center space-x-3 w-full max-w-sm bg-white border border-slate-300 text-slate-700 text-lg font-semibold py-4 px-6 rounded-lg shadow-md hover:shadow-lg transition-all hover:bg-slate-50">
+                    <h1 class="text-4xl font-bold text-slate-800 dark:text-slate-100 mb-3">Bem-vindo ao Foco TDAH</h1>
+                    <p class="text-xl text-slate-600 dark:text-slate-300 mb-10 max-w-md">Para salvar seus dados e sincronizar entre dispositivos, faça o login.</p>
+                    <button id="google-login-btn" class="flex items-center justify-center space-x-3 w-full max-w-sm bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 text-lg font-semibold py-4 px-6 rounded-lg shadow-md hover:shadow-lg transition-all hover:bg-slate-50 dark:hover:bg-slate-700">
                         <svg class="w-6 h-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8c-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4C12.955 4 4 12.955 4 24s8.955 20 20 20s20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"></path><path fill="#FF3D00" d="m6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4C16.318 4 9.656 8.337 6.306 14.691z"></path><path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238C29.211 35.091 26.715 36 24 36c-5.202 0-9.619-3.108-11.283-7.446l-6.522 5.025C9.505 39.556 16.227 44 24 44z"></path><path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303c-.792 2.237-2.231 4.166-4.087 5.571l6.19 5.238C39.712 34.421 44 28.134 44 20c0-1.341-.138-2.65-.389-3.917z"></path></svg>
                         <span>Entrar com Google</span>
                     </button>
                     <!-- Local para mostrar erros de login -->
                     <p id="auth-error-message" class="text-red-600 font-bold mt-6 text-lg max-w-sm">${errorMessage}</p>
-                    <p class="text-sm text-slate-500 mt-10">Versão: ${appVersion}</p>
-                    
-                    <!-- NOVO LOG DE DEPURAÇÃO VISÍVEL -->
-                    <div class="mt-6 w-full max-w-sm text-left">
-                        <p class="text-slate-600 font-semibold mb-2">Log de Depuração:</p>
-                        <div id="debug-log" class="text-xs bg-slate-800 text-white p-4 rounded-lg h-48 overflow-y-auto">
-                            ${logHtml.length > 0 ? logHtml : '<p class="text-slate-400">Aguardando eventos...</p>'}
-                        </div>
-                    </div>
+                    <p class="text-sm text-slate-500 dark:text-slate-400 mt-10">Versão: ${appVersion}</p>
                 </div>
             `;
         }
@@ -547,17 +558,17 @@
                 return `
                     <div class="flex flex-col items-center justify-center min-h-[70vh] p-8 text-center">
                         <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-sky-500"></div>
-                        <p class="text-slate-600 text-xl mt-6 font-semibold">Carregando...</p>
+                        <p class="text-slate-600 dark:text-slate-400 text-xl mt-6 font-semibold">Carregando...</p>
                     </div>`;
             }
         
             return `
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 md:p-6">
                     <!-- 1. Rotinas Diárias -->
-                    <div class="bg-white p-6 rounded-2xl shadow-xl">
+                    <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl">
                         <div class="flex justify-between items-center mb-4">
-                            <h2 class="text-3xl font-bold text-slate-800">Rotinas</h2>
-                            <button data-action="open-modal" data-modal="addRoutine" class="text-sky-600 hover:text-sky-800 p-1 rounded-full hover:bg-sky-100 transition-colors">
+                            <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100">Rotinas</h2>
+                            <button data-action="open-modal" data-modal="addRoutine" class="text-sky-600 hover:text-sky-800 dark:hover:text-sky-400 p-1 rounded-full hover:bg-sky-100 dark:hover:bg-slate-700 transition-colors">
                                 <i data-lucide="plus-circle" class="w-7 h-7"></i>
                             </button>
                         </div>
@@ -567,19 +578,19 @@
                     </div>
 
                     <!-- 2. Diário -->
-                    <div class="bg-white p-6 rounded-2xl shadow-xl">
-                        <h2 class="text-3xl font-bold text-slate-800 mb-4">Diário de Hoje</h2>
-                        <textarea id="journal-textarea" class="w-full h-36 p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 transition-colors" placeholder="Como foi o seu dia?"></textarea>
+                    <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl">
+                        <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100 mb-4">Diário de Hoje</h2>
+                        <textarea id="journal-textarea" class="w-full h-36 p-3 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 dark:placeholder-slate-400 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 transition-colors" placeholder="Como foi o seu dia?"></textarea>
                         <button id="save-journal-btn" class="mt-4 w-full bg-sky-600 text-white text-lg font-bold py-3 px-4 rounded-lg hover:bg-sky-700 shadow-md hover:shadow-lg transition-all">
                             Salvar Diário
                         </button>
                     </div>
 
                     <!-- 3. Próximas Tarefas -->
-                    <div class="bg-white p-6 rounded-2xl shadow-xl">
+                    <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl">
                         <div class="flex justify-between items-center mb-4">
-                            <h2 class="text-3xl font-bold text-slate-800">Próximas Tarefas</h2>
-                            <button data-action="open-modal" data-modal="addTask" class="text-sky-600 hover:text-sky-800 p-1 rounded-full hover:bg-sky-100 transition-colors">
+                            <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100">Próximas Tarefas</h2>
+                            <button data-action="open-modal" data-modal="addTask" class="text-sky-600 hover:text-sky-800 dark:hover:text-sky-400 p-1 rounded-full hover:bg-sky-100 dark:hover:bg-slate-700 transition-colors">
                                 <i data-lucide="plus-circle" class="w-7 h-7"></i>
                             </button>
                         </div>
@@ -589,10 +600,10 @@
                     </div>
 
                     <!-- 4. Objetivos -->
-                    <div class="bg-white p-6 rounded-2xl shadow-xl">
+                    <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl">
                         <div class="flex justify-between items-center mb-4">
-                            <h2 class="text-3xl font-bold text-slate-800">Objetivos</h2>
-                            <button data-action="open-modal" data-modal="addGoal" class="text-sky-600 hover:text-sky-800 p-1 rounded-full hover:bg-sky-100 transition-colors">
+                            <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100">Objetivos</h2>
+                            <button data-action="open-modal" data-modal="addGoal" class="text-sky-600 hover:text-sky-800 dark:hover:text-sky-400 p-1 rounded-full hover:bg-sky-100 dark:hover:bg-slate-700 transition-colors">
                                 <i data-lucide="plus-circle" class="w-7 h-7"></i>
                             </button>
                         </div>
@@ -606,25 +617,25 @@
 
         function renderTodayRoutines() {
             if (allRoutines.length === 0) {
-                return `<p class="text-slate-500">Nenhuma rotina criada. Adicione uma no botão '+' acima.</p>`;
+                return `<p class="text-slate-500 dark:text-slate-400">Nenhuma rotina criada. Adicione uma no botão '+' acima.</p>`;
             }
             return allRoutines.map(routine => {
                 const historyEntry = routineHistory.find(h => h.routineId === routine.id && h.date === todayString);
                 const isCompleted = historyEntry?.completed || false;
                 
                 return `
-                    <div class="flex items-center justify-between bg-slate-50 border border-slate-200 p-4 rounded-lg">
-                        <label class="flex items-center space-x-4 text-xl text-slate-800">
+                    <div class="flex items-center justify-between bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 p-4 rounded-lg">
+                        <label class="flex items-center space-x-4 text-xl text-slate-800 dark:text-slate-100">
                             <input type="checkbox" 
-                                   class="form-checkbox h-7 w-7 text-sky-600 rounded-md border-slate-300 focus:ring-sky-500" 
+                                   class="form-checkbox h-7 w-7 text-sky-600 rounded-md border-slate-300 dark:border-slate-500 focus:ring-sky-500" 
                                    ${isCompleted ? 'checked' : ''}
                                    data-action="toggle-routine"
                                    data-routine-id="${routine.id}"
                                    data-routine-name="${routine.name}"
                                    data-history-id="${historyEntry?.id || ''}">
-                            <span class="${isCompleted ? 'line-through text-slate-400' : ''}">${routine.name}</span>
+                            <span class="${isCompleted ? 'line-through text-slate-400 dark:text-slate-500' : ''}">${routine.name}</span>
                         </label>
-                        <button data-action="delete-routine" data-id="${routine.id}" class="text-slate-400 hover:text-rose-500 transition-colors">
+                        <button data-action="delete-routine" data-id="${routine.id}" class="text-slate-400 dark:text-slate-500 hover:text-rose-500 transition-colors">
                             <i data-lucide="trash-2" class="w-5 h-5"></i>
                         </button>
                     </div>
@@ -648,7 +659,7 @@
             upcomingTasks.sort((a, b) => a.date.localeCompare(b.date));
 
             if (upcomingTasks.length === 0) {
-                return `<p class="text-slate-500">Nenhuma tarefa para os próximos 7 dias. Adicione uma no botão '+' acima.</p>`;
+                return `<p class="text-slate-500 dark:text-slate-400">Nenhuma tarefa para os próximos 7 dias. Adicione uma no botão '+' acima.</p>`;
             }
             
             return upcomingTasks.map(task => {
@@ -658,11 +669,11 @@
                 let daysText = '';
 
                 if (daysRemaining >= 5) { // 7, 6, 5 dias
-                    colorClass = 'bg-emerald-100 text-emerald-800 border-emerald-200';
+                    colorClass = 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-800 dark:text-emerald-200 dark:border-emerald-700';
                 } else if (daysRemaining >= 2) { // 4, 3, 2 dias
-                    colorClass = 'bg-orange-100 text-orange-800 border-orange-200';
+                    colorClass = 'bg-orange-100 text-orange-800 border-orange-200 dark:bg-orange-800 dark:text-orange-200 dark:border-orange-700';
                 } else { // 1, 0 dias
-                    colorClass = 'bg-rose-100 text-rose-800 border-rose-200';
+                    colorClass = 'bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-800 dark:text-rose-200 dark:border-rose-700';
                 }
 
                 if (daysRemaining === 0) {
@@ -674,8 +685,8 @@
                 }
 
                 return `
-                    <div class="flex items-center justify-between bg-slate-50 border border-slate-200 p-4 rounded-lg">
-                        <span class="text-xl text-slate-800">${task.name}</span>
+                    <div class="flex items-center justify-between bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 p-4 rounded-lg">
+                        <span class="text-xl text-slate-800 dark:text-slate-100">${task.name}</span>
                         <div class="flex items-center space-x-3">
                             <span class="font-bold text-sm px-2.5 py-0.5 rounded-full border ${colorClass}">
                                 ${daysText}
@@ -692,18 +703,18 @@
         function renderActiveGoals() {
             const activeGoals = allGoals.filter(goal => !goal.completed);
             if (activeGoals.length === 0) {
-                return `<p class="text-slate-500">Nenhum objetivo ativo. Adicione um no botão '+' acima.</p>`;
+                return `<p class="text-slate-500 dark:text-slate-400">Nenhum objetivo ativo. Adicione um no botão '+' acima.</p>`;
             }
             return activeGoals.map(goal => `
-                <div class="flex items-center justify-between bg-slate-50 border border-slate-200 p-4 rounded-lg">
-                    <label class="flex items-center space-x-4 text-xl text-slate-800">
+                <div class="flex items-center justify-between bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 p-4 rounded-lg">
+                    <label class="flex items-center space-x-4 text-xl text-slate-800 dark:text-slate-100">
                         <input type="checkbox" 
-                               class="form-checkbox h-7 w-7 text-emerald-600 rounded-md border-slate-300 focus:ring-emerald-500"
+                               class="form-checkbox h-7 w-7 text-emerald-600 rounded-md border-slate-300 dark:border-slate-500 focus:ring-emerald-500"
                                data-action="complete-goal"
                                data-id="${goal.id}">
                         <span>${goal.name}</span>
                     </label>
-                    <button data-action="delete-goal" data-id="${goal.id}" class="text-slate-400 hover:text-rose-500 transition-colors">
+                    <button data-action="delete-goal" data-id="${goal.id}" class="text-slate-400 dark:text-slate-500 hover:text-rose-500 transition-colors">
                             <i data-lucide="trash-2" class="w-5 h-5"></i>
                     </button>
                 </div>
@@ -748,7 +759,7 @@
 
             return `
                 <div class="p-6">
-                    <h2 class="text-4xl font-bold text-slate-800 mb-8">Estatísticas de Rotinas</h2>
+                    <h2 class="text-4xl font-bold text-slate-800 dark:text-slate-100 mb-8">Estatísticas de Rotinas</h2>
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                         ${createStatCard("Esta Semana", stats.week.completed, stats.week.total)}
                         ${createStatCard("Este Mês", stats.month.completed, stats.month.total)}
@@ -761,10 +772,10 @@
         function createStatCard(title, completed, total) {
             const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
             return `
-                <div class="bg-white p-6 rounded-2xl shadow-xl text-center">
-                    <h3 class="text-2xl font-semibold text-slate-700">${title}</h3>
-                    <p class="text-6xl font-bold text-sky-600 my-4">${percentage}%</p>
-                    <p class="text-lg text-slate-500">${completed} de ${total} concluídas</p>
+                <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl text-center">
+                    <h3 class="text-2xl font-semibold text-slate-700 dark:text-slate-200">${title}</h3>
+                    <p class="text-6xl font-bold text-sky-600 dark:text-sky-500 my-4">${percentage}%</p>
+                    <p class="text-lg text-slate-500 dark:text-slate-400">${completed} de ${total} concluídas</p>
                 </div>
             `;
         }
@@ -782,27 +793,27 @@
 
             const sortedMonths = Object.keys(entriesByMonth).sort().reverse();
             
-            let html = `<div class="p-6"><h2 class="text-4xl font-bold text-slate-800 mb-8">Meu Diário</h2><div class="space-y-8">`;
+            let html = `<div class="p-6"><h2 class="text-4xl font-bold text-slate-800 dark:text-slate-100 mb-8">Meu Diário</h2><div class="space-y-8">`;
 
             if (sortedMonths.length === 0) {
-                 html += `<p class="text-slate-500 text-center mt-8 text-lg">Nenhuma entrada no diário ainda.</p>`;
+                 html += `<p class="text-slate-500 dark:text-slate-400 text-center mt-8 text-lg">Nenhuma entrada no diário ainda.</p>`;
             }
 
             sortedMonths.forEach(monthKey => {
                 const [year, month] = monthKey.split('-');
                 const monthName = new Date(year, month - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
                 
-                html += `<div class="bg-white p-6 rounded-2xl shadow-xl">
-                            <h3 class="text-3xl font-semibold text-sky-700 mb-5 capitalize">${monthName}</h3>
+                html += `<div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl">
+                            <h3 class="text-3xl font-semibold text-sky-700 dark:text-sky-500 mb-5 capitalize">${monthName}</h3>
                             <div class="space-y-5">`;
                 
                 entriesByMonth[monthKey].sort((a, b) => b.id.localeCompare(a.id)).forEach(entry => {
                     const [y, m, d] = entry.id.split('-').map(Number);
                     const entryDate = new Date(y, m - 1, d).toLocaleDateString('pt-BR', { day: 'numeric', month: 'short', year: 'numeric' });
                     html += `
-                        <div class="border-b border-slate-200 pb-4">
-                            <p class="text-lg font-semibold text-slate-800">${entryDate}</p>
-                            <p class="text-slate-600 whitespace-pre-wrap mt-1">${entry.text}</p>
+                        <div class="border-b border-slate-200 dark:border-slate-700 pb-4">
+                            <p class="text-lg font-semibold text-slate-800 dark:text-slate-100">${entryDate}</p>
+                            <p class="text-slate-600 dark:text-slate-300 whitespace-pre-wrap mt-1">${entry.text}</p>
                         </div>
                     `;
                 });
@@ -826,14 +837,14 @@
 
             let html = `
                 <div class="p-4 md:p-6">
-                    <div class="bg-white rounded-2xl shadow-xl max-w-5xl mx-auto">
+                    <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-xl max-w-5xl mx-auto">
                         <!-- Header do Calendário -->
-                        <div class="flex justify-between items-center p-6 border-b border-slate-200">
-                            <button data-action="calendar-prev" class="p-2 rounded-full hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-colors">
+                        <div class="flex justify-between items-center p-6 border-b border-slate-200 dark:border-slate-700">
+                            <button data-action="calendar-prev" class="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 dark:hover:text-slate-100 transition-colors">
                                 <i data-lucide="chevron-left" class="w-6 h-6"></i>
                             </button>
-                            <h2 class="text-3xl font-bold text-sky-700 capitalize">${monthName}</h2>
-                            <button data-action="calendar-next" class="p-2 rounded-full hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-colors">
+                            <h2 class="text-3xl font-bold text-sky-700 dark:text-sky-500 capitalize">${monthName}</h2>
+                            <button data-action="calendar-next" class="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 dark:hover:text-slate-100 transition-colors">
                                 <i data-lucide="chevron-right" class="w-6 h-6"></i>
                             </button>
                         </div>
@@ -841,10 +852,10 @@
                         <!-- Grid dos Dias -->
                         <div class="grid grid-cols-7">
                             <!-- Cabeçalho dos dias da semana -->
-                            ${daysOfWeek.map(day => `<div class="text-center font-semibold text-slate-500 p-4 border-b border-slate-200">${day}</div>`).join('')}
+                            ${daysOfWeek.map(day => `<div class="text-center font-semibold text-slate-500 dark:text-slate-400 p-4 border-b border-slate-200 dark:border-slate-700">${day}</div>`).join('')}
                             
                             <!-- Dias em branco (início) -->
-                            ${Array(firstDayOfMonth).fill('').map(() => `<div class="border-r border-b border-slate-200 h-32"></div>`).join('')}
+                            ${Array(firstDayOfMonth).fill('').map(() => `<div class="border-r border-b border-slate-200 dark:border-slate-700 h-32"></div>`).join('')}
 
                             <!-- Dias do mês -->
                             ${Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
@@ -853,11 +864,11 @@
                                 const isToday = dateStr === todayString;
 
                                 return `
-                                    <div class="border-r border-b border-slate-200 h-32 p-2 overflow-y-auto relative">
-                                        <div class="font-semibold text-lg ${isToday ? 'bg-sky-600 text-white rounded-full w-8 h-8 flex items-center justify-center' : 'text-slate-700'}">${day}</div>
+                                    <div class="border-r border-b border-slate-200 dark:border-slate-700 h-32 p-2 overflow-y-auto relative">
+                                        <div class="font-semibold text-lg ${isToday ? 'bg-sky-600 text-white rounded-full w-8 h-8 flex items-center justify-center' : 'text-slate-700 dark:text-slate-300'}">${day}</div>
                                         <div class="mt-2 space-y-1">
                                             ${tasksForDay.map(task => `
-                                                <div class="text-xs p-1 rounded font-medium ${task.completed ? 'bg-emerald-100 text-emerald-800 line-through' : 'bg-sky-100 text-sky-800'}">
+                                                <div class="text-xs p-1 rounded font-medium ${task.completed ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-800 dark:text-emerald-200 line-through' : 'bg-sky-100 text-sky-800 dark:bg-sky-800 dark:text-sky-200'}">
                                                     ${task.name}
                                                 </div>
                                             `).join('')}
@@ -878,25 +889,25 @@
 
             return `
                 <div class="p-6">
-                    <h2 class="text-4xl font-bold text-slate-800 mb-8">Meus Objetivos</h2>
+                    <h2 class="text-4xl font-bold text-slate-800 dark:text-slate-100 mb-8">Meus Objetivos</h2>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
                         <!-- Objetivos Não Concluídos -->
-                        <div class="bg-white p-6 rounded-2xl shadow-xl">
-                            <h3 class="text-3xl font-semibold text-slate-700 mb-5">Ativos</h3>
+                        <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl">
+                            <h3 class="text-3xl font-semibold text-slate-700 dark:text-slate-200 mb-5">Ativos</h3>
                             <div class="space-y-4">
                                 ${activeGoals.length > 0 ? activeGoals.map(goal => `
-                                    <p class="text-xl text-slate-700 p-4 bg-slate-50 border border-slate-200 rounded-lg">${goal.name}</p>
-                                `).join('') : `<p class="text-slate-500 text-lg">Nenhum objetivo ativo.</p>`}
+                                    <p class="text-xl text-slate-700 dark:text-slate-200 p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg">${goal.name}</p>
+                                `).join('') : `<p class="text-slate-500 dark:text-slate-400 text-lg">Nenhum objetivo ativo.</p>`}
                             </div>
                         </div>
                         
                         <!-- Objetivos Concluídos -->
-                        <div class="bg-white p-6 rounded-2xl shadow-xl">
-                            <h3 class="text-3xl font-semibold text-slate-700 mb-5">Concluídos</h3>
+                        <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl">
+                            <h3 class="text-3xl font-semibold text-slate-700 dark:text-slate-200 mb-5">Concluídos</h3>
                             <div class="space-y-4">
                                 ${completedGoals.length > 0 ? completedGoals.map(goal => `
-                                    <p class="text-xl text-slate-400 line-through p-4 bg-slate-50 border border-slate-200 rounded-lg">${goal.name}</p>
-                                `).join('') : `<p class="text-slate-500 text-lg">Nenhum objetivo concluído ainda.</p>`}
+                                    <p class="text-xl text-slate-400 dark:text-slate-500 line-through p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg">${goal.name}</p>
+                                `).join('') : `<p class="text-slate-500 dark:text-slate-400 text-lg">Nenhum objetivo concluído ainda.</p>`}
                             </div>
                         </div>
                     </div>
@@ -920,8 +931,8 @@
                 case 'addRoutine':
                     modalTitle = 'Nova Rotina Diária';
                     modalContent = `
-                        <label for="routine-name" class="block text-lg font-medium text-slate-700">Nome da Rotina</label>
-                        <input type="text" id="routine-name" class="mt-2 block w-full border border-slate-300 rounded-lg p-3 text-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500" placeholder="Ex: Tomar café da manhã">
+                        <label for="routine-name" class="block text-lg font-medium text-slate-700 dark:text-slate-200">Nome da Rotina</label>
+                        <input type="text" id="routine-name" class="mt-2 block w-full border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 rounded-lg p-3 text-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500" placeholder="Ex: Tomar café da manhã">
                         <button id="save-routine-btn" class="mt-6 w-full bg-sky-600 text-white font-bold text-lg py-3 px-4 rounded-lg hover:bg-sky-700 shadow-md hover:shadow-lg transition-all">
                             Salvar Rotina
                         </button>
@@ -930,11 +941,11 @@
                 case 'addTask':
                     modalTitle = 'Nova Tarefa Agendada';
                     modalContent = `
-                        <label for="task-name" class="block text-lg font-medium text-slate-700">Nome da Tarefa</label>
-                        <input type="text" id="task-name" class="mt-2 block w-full border border-slate-300 rounded-lg p-3 text-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500" placeholder="Ex: Consulta médica">
+                        <label for="task-name" class="block text-lg font-medium text-slate-700 dark:text-slate-200">Nome da Tarefa</label>
+                        <input type="text" id="task-name" class="mt-2 block w-full border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 rounded-lg p-3 text-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500" placeholder="Ex: Consulta médica">
                         
-                        <label for="task-date" class="block text-lg font-medium text-slate-700 mt-4">Data</label>
-                        <input type="date" id="task-date" value="${todayString}" class="mt-2 block w-full border border-slate-300 rounded-lg p-3 text-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500">
+                        <label for="task-date" class="block text-lg font-medium text-slate-700 dark:text-slate-200 mt-4">Data</label>
+                        <input type="date" id="task-date" value="${todayString}" class="mt-2 block w-full border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 rounded-lg p-3 text-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500">
                         
                         <button id="save-task-btn" class="mt-6 w-full bg-sky-600 text-white font-bold text-lg py-3 px-4 rounded-lg hover:bg-sky-700 shadow-md hover:shadow-lg transition-all">
                             Salvar Tarefa
@@ -944,8 +955,8 @@
                 case 'addGoal':
                     modalTitle = 'Novo Objetivo';
                     modalContent = `
-                        <label for="goal-name" class="block text-lg font-medium text-slate-700">Nome do Objetivo</label>
-                        <input type="text" id="goal-name" class="mt-2 block w-full border border-slate-300 rounded-lg p-3 text-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500" placeholder="Ex: Ler 1 livro este mês">
+                        <label for="goal-name" class="block text-lg font-medium text-slate-700 dark:text-slate-200">Nome do Objetivo</label>
+                        <input type="text" id="goal-name" class="mt-2 block w-full border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 rounded-lg p-3 text-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500" placeholder="Ex: Ler 1 livro este mês">
                         <button id="save-goal-btn" class="mt-6 w-full bg-sky-600 text-white font-bold text-lg py-3 px-4 rounded-lg hover:bg-sky-700 shadow-md hover:shadow-lg transition-all">
                             Salvar Objetivo
                         </button>
@@ -956,10 +967,10 @@
             modalContainer.innerHTML = `
                 <div class="fixed inset-0 bg-black/70 backdrop-blur-sm z-40" data-action="close-modal"></div>
                 <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-                    <div class="bg-white w-full max-w-md p-6 rounded-2xl shadow-2xl">
+                    <div class="bg-white dark:bg-slate-800 w-full max-w-md p-6 rounded-2xl shadow-2xl">
                         <div class="flex justify-between items-center mb-5">
-                            <h3 class="text-3xl font-bold text-slate-800">${modalTitle}</h3>
-                            <button data-action="close-modal" class="text-slate-400 hover:text-slate-600">
+                            <h3 class="text-3xl font-bold text-slate-800 dark:text-slate-100">${modalTitle}</h3>
+                            <button data-action="close-modal" class="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300">
                                 <i data-lucide="x" class="w-8 h-8"></i>
                             </button>
                         </div>
@@ -993,6 +1004,12 @@
                 // Ação de Logout
                 if (action === 'auth-logout') {
                     handleLogout();
+                    return;
+                }
+                
+                // Ação de Mudar Tema
+                if (action === 'toggle-theme') {
+                    setTheme(currentTheme === 'light' ? 'dark' : 'light');
                     return;
                 }
 
@@ -1077,12 +1094,12 @@
                     currentModal = null;
                     renderModal();
                 } catch (error) {
-                    logEvent('ERROR', 'Erro ao adicionar rotina:', error.message);
+                    console.error("Erro ao adicionar rotina:", error);
                 }
             } else if (!name) {
                 console.warn("Nome da rotina está vazio.");
             } else if (!userId) {
-                logEvent('ERROR', 'Usuário não autenticado. Não é possível salvar.');
+                console.error("Usuário não autenticado. Não é possível salvar.");
             }
         }
         
@@ -1100,9 +1117,9 @@
                     });
                     await batch.commit();
                     
-                    logEvent('INFO', "Rotina e histórico deletados.");
+                    console.log("Rotina e histórico deletados.");
                 } catch (error) {
-                    logEvent('ERROR', 'Erro ao deletar rotina:', error.message);
+                    console.error("Erro ao deletar rotina:", error);
                 }
             });
         }
@@ -1125,7 +1142,7 @@
                 }, { merge: true }); 
                 
             } catch (error) {
-                logEvent('ERROR', 'Erro ao atualizar rotina:', error.message);
+                console.error("Erro ao atualizar rotina:", error);
             }
         }
         
@@ -1151,7 +1168,7 @@
                     }, 2000);
                     
                 } catch (error) {
-                    logEvent('ERROR', 'Erro ao salvar diário:', error.message);
+                    console.error("Erro ao salvar diário:", error);
                 }
             }
         }
@@ -1170,7 +1187,7 @@
                     currentModal = null;
                     renderModal();
                 } catch (error) {
-                    logEvent('ERROR', 'Erro ao adicionar tarefa:', error.message);
+                    console.error("Erro ao adicionar tarefa:", error);
                 }
             }
         }
@@ -1184,7 +1201,7 @@
                 });
             } catch (error)
  {
-                logEvent('ERROR', 'Erro ao completar tarefa:', error.message);
+                console.error("Erro ao completar tarefa:", error);
             }
         }
         
@@ -1201,7 +1218,7 @@
                     currentModal = null;
                     renderModal();
                 } catch (error) {
-                    logEvent('ERROR', 'Erro ao adicionar objetivo:', error.message);
+                    console.error("Erro ao adicionar objetivo:", error);
                 }
             }
         }
@@ -1217,7 +1234,7 @@
                     completedAt: new Date().toISOString()
                 });
             } catch (error) {
-                logEvent('ERROR', 'Erro ao completar objetivo:', error.message);
+                console.error("Erro ao completar objetivo:", error);
             }
         }
         
@@ -1227,7 +1244,7 @@
                  try {
                     await deleteDoc(doc(db, `${dbPathPrefix}/goals`, goalId));
                 } catch (error) {
-                    logEvent('ERROR', 'Erro ao deletar objetivo:', error.message);
+                    console.error("Erro ao deletar objetivo:", error);
                 }
             });
         }
@@ -1252,9 +1269,9 @@
             const modalHtml = `
                 <div id="${confirmationId}" class="fixed inset-0 z-50 flex items-center justify-center p-4">
                     <div class="fixed inset-0 bg-black/70 backdrop-blur-sm" data-action="close-confirm"></div>
-                    <div class="bg-white w-full max-w-sm p-6 rounded-2xl shadow-2xl z-10">
-                        <h3 class="text-2xl font-semibold text-slate-800 mb-4">Confirmar Ação</h3>
-                        <p class="text-slate-600 mb-6 text-lg">${message}</p>
+                    <div class="bg-white dark:bg-slate-800 w-full max-w-sm p-6 rounded-2xl shadow-2xl z-10">
+                        <h3 class="text-2xl font-semibold text-slate-800 dark:text-slate-100 mb-4">Confirmar Ação</h3>
+                        <p class="text-slate-600 dark:text-slate-300 mb-6 text-lg">${message}</p>
                         <div class="flex justify-end space-x-3">
                             <button data-action="close-confirm" class="px-5 py-2 bg-slate-200 text-slate-800 rounded-lg hover:bg-slate-300 font-semibold transition-colors">
                                 Cancelar
@@ -1331,7 +1348,7 @@
         }
     </style>
 </head>
-<body class="antialiased font-sans bg-slate-100">
+<body class="antialiased font-sans bg-slate-100 dark:bg-slate-900">
 
     <!-- Menu Lateral (Sidebar) -->
     <div id="menu-overlay" data-action="close-menu" class="fixed inset-0 bg-black bg-opacity-60 z-10 hidden transition-opacity"></div>
@@ -1365,6 +1382,14 @@
             </div>
             <!-- Informações de Versão e Login/Logout -->
             <div class="p-4 border-t border-slate-700">
+                <!-- Botão de Tema -->
+                <div class="flex justify-between items-center px-4 py-3 mb-2">
+                    <span class="text-lg text-slate-200">Modo Escuro</span>
+                    <button id="theme-toggle-button" data-action="toggle-theme" class="relative inline-flex items-center h-6 rounded-full w-11 transition-colors bg-slate-600">
+                        <span id="theme-toggle-knob" class="inline-block w-4 h-4 transform bg-white rounded-full transition-transform translate-x-1"></span>
+                    </button>
+                </div>
+                
                  <div id="auth-user-display" class="px-4 py-2 text-sm text-slate-400">Carregando...</div>
                  <div id="auth-button-container">
                     <!-- O botão de Login/Logout é renderizado aqui -->
@@ -1377,17 +1402,17 @@
     <!-- Conteúdo Principal -->
     <div class="min-h-screen">
         <!-- Header Principal -->
-        <header id="main-header" class="bg-white shadow-md sticky top-0 z-0 border-b border-slate-200">
+        <header id="main-header" class="bg-white dark:bg-slate-800 shadow-md sticky top-0 z-0 border-b border-slate-200 dark:border-slate-700">
             <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div class="flex justify-between items-center h-20">
                     <!-- Botão Menu -->
-                    <button id="menu-button" data-action="open-menu" class="text-slate-600 hover:text-sky-600 transition-colors">
+                    <button id="menu-button" data-action="open-menu" class="text-slate-600 dark:text-slate-300 hover:text-sky-600 transition-colors">
                         <i data-lucide="menu" class="w-8 h-8"></i>
                     </button>
                     <!-- Data -->
                     <div class="text-center">
-                        <h1 class="text-2xl font-bold text-slate-900">Painel Principal</h1>
-                        <p id="header-date" class="text-sm text-slate-500 font-medium"></p>
+                        <h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">Painel Principal</h1>
+                        <p id="header-date" class="text-sm text-slate-500 dark:text-slate-400 font-medium"></p>
                     </div>
                     <!-- Espaçador (ou ícone de perfil) -->
                     <div class="w-8"></div>
