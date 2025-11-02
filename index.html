@@ -70,7 +70,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "2.4.0 (Ícone de Tarefa Dinâmico)";
+        const appVersion = "2.4.1 (Ajustes de UI)";
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -209,7 +209,7 @@
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register(swUrl)
-                    .then(registration => console.log('Service Worker v2.4.0 registrado', registration.scope))
+                    .then(registration => console.log('Service Worker v2.4.1 registrado', registration.scope))
                     .catch(error => console.error('Falha no registro do Service Worker', error));
             });
         }
@@ -450,6 +450,10 @@
                 allTasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 console.log("Tarefas carregadas:", allTasks.length);
                 if (auth.currentUser) render();
+                
+                if (currentPage === 'taskCalendar') {
+                    initializeFullCalendar(); // Recarrega os eventos
+                }
             }, (error) => console.error("Erro ao carregar tarefas:", error));
             unsubscribes.push(unsubTasks);
 
@@ -684,6 +688,7 @@
                     </div>`;
             }
         
+            // --- MUDANÇA v2.4.1: Ordem trocada ---
             return `
                 <div class="p-4 flex flex-col gap-6">
                     <!-- Data -->
@@ -704,20 +709,7 @@
                         </div>
                     </div>
 
-                    <!-- 2. Rotinas Diárias -->
-                    <div class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-xl">
-                        <div class="flex justify-between items-center mb-4">
-                            <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100">Rotinas</h2>
-                            <button data-action="open-modal" data-modal="addRoutine" class="text-sky-600 hover:text-sky-800 dark:hover:text-sky-400 p-1 rounded-full hover:bg-sky-100 dark:hover:bg-slate-700 transition-colors">
-                                <i data-lucide="plus-circle" class="w-7 h-7"></i>
-                            </button>
-                        </div>
-                        <div id="routines-list" class="space-y-3">
-                            ${renderTodayRoutines()}
-                        </div>
-                    </div>
-
-                    <!-- 3. Próximas Tarefas -->
+                    <!-- 2. Próximas Tarefas (MOVIDO PARA CIMA) -->
                     <div class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-xl">
                         <div class="flex justify-between items-center mb-4">
                             <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100">Próximas Tarefas</h2>
@@ -727,6 +719,19 @@
                         </div>
                         <div id="tasks-list" class="space-y-3">
                             ${renderUpcomingTasks()}
+                        </div>
+                    </div>
+
+                    <!-- 3. Rotinas Diárias (MOVIDO PARA BAIXO) -->
+                    <div class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-xl">
+                        <div class="flex justify-between items-center mb-4">
+                            <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100">Rotinas</h2>
+                            <button data-action="open-modal" data-modal="addRoutine" class="text-sky-600 hover:text-sky-800 dark:hover:text-sky-400 p-1 rounded-full hover:bg-sky-100 dark:hover:bg-slate-700 transition-colors">
+                                <i data-lucide="plus-circle" class="w-7 h-7"></i>
+                            </button>
+                        </div>
+                        <div id="routines-list" class="space-y-3">
+                            ${renderTodayRoutines()}
                         </div>
                     </div>
 
@@ -825,7 +830,6 @@
             }
             
             return upcomingTasks.map(task => {
-                // --- CORREÇÃO v2.3.4: Chama a função global ---
                 const countdown = getTaskCountdown(task); 
                 const isCompleted = task.completed;
                 
@@ -1302,7 +1306,9 @@
         }
         
         // --- CALENDÁRIO FULLCALENDAR (REMOVIDO) ---
-        // function initializeFullCalendar() { ... }
+        function initializeFullCalendar() {
+            // Esta função está vazia agora
+        }
         
         // --- PÁGINA DE OBJETIVOS (v2.2.2 - CORREÇÃO) ---
         function renderGoalStats() {
@@ -1941,13 +1947,13 @@
         // --- Funções Auxiliares (Modal de Confirmação) ---
         
         // --- FUNÇÃO DE CONTAGEM REGRESSIVA (v2.3.1 - Correção) ---
-        // *** ESTA É A FUNÇÃO CORRIGIDA ***
         function getTaskCountdown(task) {
             const now = new Date();
             
             const [year, month, day] = task.date.split('-').map(Number);
             let taskTime = [0, 0]; // Default 00:00
             
+            // --- CORREÇÃO AQUI ---
             // Verifica se task.time existe e não está vazio
             if (task.time && task.time.includes(':')) { 
                 taskTime = task.time.split(':').map(Number); 
@@ -2089,23 +2095,20 @@
         <header id="main-header" class="bg-white dark:bg-slate-800 shadow-md sticky top-0 z-10 border-b border-slate-200 dark:border-slate-700">
             <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div class="flex justify-between items-center h-20">
-                    <!-- Título (agora à esquerda) -->
-                    <div class="flex items-center gap-2">
-                         <!-- Ícone de Alerta (controlado por JS) -->
+                    <!-- Espaçador da Esquerda (para balancear) -->
+                    <div class="w-8"></div> 
+                    
+                    <!-- Título (Centralizado com ícones) -->
+                    <div class="flex items-center gap-3">
                         <i id="alert-icon" data-lucide="bell" class="w-6 h-6 text-rose-500 hidden animate-pulse"></i>
                         <h1 id="header-title" class="text-2xl font-bold text-slate-900 dark:text-slate-100">Painel Principal</h1>
+                        <i id="task-clock-icon" data-lucide="clock" class="w-6 h-6 hidden"></i> 
                     </div>
                     
-                    <!-- LADO DIREITO (NOVO) -->
-                    <div class="flex items-center gap-3">
-                        <!-- NOVO ÍCONE DE RELÓGIO -->
-                        <i id="task-clock-icon" data-lucide="clock" class="w-6 h-6 hidden"></i> 
-                        
-                        <!-- Botão de Configurações (novo) -->
-                        <button id="settings-button" data-action="open-settings" class="text-slate-600 dark:text-slate-300 hover:text-sky-600 dark:hover:text-sky-400 transition-colors">
-                            <i data-lucide="settings" class="w-7 h-7"></i>
-                        </button>
-                    </div>
+                    <!-- Botão de Configurações (Direita) -->
+                    <button id="settings-button" data-action="open-settings" class="text-slate-600 dark:text-slate-300 hover:text-sky-600 dark:hover:text-sky-400 transition-colors">
+                        <i data-lucide="settings" class="w-7 h-7"></i>
+                    </button>
                 </div>
             </div>
         </header>
