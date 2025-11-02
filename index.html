@@ -48,19 +48,20 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "1.6.0 (Modo Depuração)"; // Log de Erros Visível
+        const appVersion = "1.6.1 (Modo Depuração)"; // Log de Erros Visível
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
         // COLE SUA CHAVE 'apiKey' SECRETA NA LINHA ABAIXO:
         const firebaseConfig = {
-          apiKey: "AIzaSyBUG85P90L8eFjV3-rcI9X7G64v15JpVio", // <-- COLE SUA CHAVE AQUI
-          authDomain: "meu-foco-pwa.firebaseapp.com",
-          projectId: "meu-foco-pwa",
-          storageBucket: "meu-foco-pwa.firebasestorage.app",
-          messagingSenderId: "126519054955"
-          // A linha "appId" foi REMOVIDA INTENCIONALMENTE para corrigir o bug.
-        };
+  apiKey: "AIzaSyBUG85P90L8eFjV3-rcI9X7G64v15JpVio",
+  authDomain: "meu-foco-pwa.firebaseapp.com",
+  databaseURL: "https://meu-foco-pwa-default-rtdb.firebaseio.com",
+  projectId: "meu-foco-pwa",
+  storageBucket: "meu-foco-pwa.firebasestorage.app",
+  messagingSenderId: "126519054955",
+  appId: "1:126519054955:web:7576cc1170dc2a17ef972e"
+};
         // ----------------------------------------------------
 
         // --- LOG DE DEPURAÇÃO VISUAL ---
