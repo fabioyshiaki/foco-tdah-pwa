@@ -70,7 +70,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "2.4.3 (Header Simétrico)";
+        const appVersion = "2.4.4 (Porcentagem no Gráfico)";
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -209,7 +209,7 @@
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register(swUrl)
-                    .then(registration => console.log('Service Worker v2.4.2 registrado', registration.scope))
+                    .then(registration => console.log('Service Worker v2.4.4 registrado', registration.scope))
                     .catch(error => console.error('Falha no registro do Service Worker', error));
             });
         }
@@ -964,6 +964,7 @@
             renderYearChart();
         }
         
+        // --- MUDANÇA v2.4.4: Adiciona texto no centro ---
         function renderTodayChart() {
             const ctx = document.getElementById('todayChart')?.getContext('2d');
             if (!ctx) return;
@@ -972,7 +973,13 @@
             const completed = todayEntries.filter(h => h.completed).length;
             const total = allRoutines.length;
             const pending = total - completed;
+            
+            const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
+            const percentageText = `${percentage}%`;
+            const isDark = document.documentElement.classList.contains('dark');
 
+            if (window.myCharts.todayChart) window.myCharts.todayChart.destroy();
+            
             window.myCharts.todayChart = new Chart(ctx, {
                 type: 'doughnut',
                 data: {
@@ -981,24 +988,50 @@
                         data: [completed, pending < 0 ? 0 : pending],
                         backgroundColor: [
                             '#0ea5e9', // sky-500
-                            document.documentElement.classList.contains('dark') ? '#334155' : '#e2e8f0' // slate-700 / slate-200
+                            isDark ? '#334155' : '#e2e8f0' // slate-700 / slate-200
                         ],
-                        borderColor: document.documentElement.classList.contains('dark') ? '#1e293b' : '#ffffff', // bg-slate-800 ou bg-white
-                        borderWidth: 4
+                        borderColor: isDark ? '#1e293b' : '#ffffff', // bg-slate-800 ou bg-white
+                        borderWidth: 4,
+                        cutout: '70%' // Aumentar o buraco
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
                     plugins: {
-                        legend: {
+                        legend: { // Legenda (Concluídas, Pendentes)
                             position: 'bottom',
                             labels: {
                                 padding: 20
                             }
                         }
                     }
-                }
+                },
+                // Plugin customizado para desenhar o texto no centro
+                plugins: [{
+                    id: 'doughnutText',
+                    afterDraw(chart, args, options) {
+                        const { ctx } = chart;
+                        const centerX = chart.getDatasetMeta(0).data[0].x;
+                        const centerY = chart.getDatasetMeta(0).data[0].y;
+                        
+                        ctx.save();
+                        
+                        // Texto Principal (Porcentagem)
+                        ctx.font = 'bold 3rem Inter, sans-serif'; // 3rem = 48px
+                        ctx.fillStyle = isDark ? '#f1f5f9' : '#1e293b'; // slate-100 / slate-800
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(percentageText, centerX, centerY - 10); // Um-pouco para cima
+                        
+                        // Sub-texto ("Concluído")
+                        ctx.font = '600 1rem Inter, sans-serif'; // 1rem = 16px
+                        ctx.fillStyle = isDark ? '#94a3b8' : '#64748b'; // slate-400 / slate-500
+                        ctx.fillText('Concluído', centerX, centerY + 25); // Um-pouco para baixo
+                        
+                        ctx.restore();
+                    }
+                }]
             });
         }
         
