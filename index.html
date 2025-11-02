@@ -70,7 +70,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "2.3.0 (Tarefas com Hora)";
+        const appVersion = "2.3.3 (Correção de Bug Crítico)";
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -209,7 +209,7 @@
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register(swUrl)
-                    .then(registration => console.log('Service Worker v2.3.0 registrado', registration.scope))
+                    .then(registration => console.log('Service Worker v2.3.3 registrado', registration.scope))
                     .catch(error => console.error('Falha no registro do Service Worker', error));
             });
         }
@@ -451,7 +451,7 @@
                 console.log("Tarefas carregadas:", allTasks.length);
                 if (auth.currentUser) render();
                 
-                if (currentPage === 'taskCalendar') {
+                if (currentPage === 'taskCalendar' && window.myCalendar) {
                     initializeFullCalendar(); // Recarrega os eventos
                 }
             }, (error) => console.error("Erro ao carregar tarefas:", error));
@@ -481,13 +481,8 @@
                 Object.values(window.myCharts).forEach(chart => chart.destroy());
                 window.myCharts = {};
             }
-            if (currentPage !== 'taskCalendar') {
-                if (window.myCalendar) {
-                    window.myCalendar.destroy();
-                    window.myCalendar = null;
-                }
-            }
-
+            // CORREÇÃO v2.3.1: Não destrói mais o calendário aqui
+            
             const appContainer = document.getElementById('app-container');
             const header = document.getElementById('main-header');
             const bottomNav = document.getElementById('bottom-nav');
@@ -743,23 +738,33 @@
             }).join('');
         }
         
-        // --- FUNÇÃO DE CONTAGEM REGRESSIVA ATUALIZADA (v2.3.0) ---
+        // --- FUNÇÃO DE CONTAGEM REGRESSIVA ATUALIZADA (v2.3.1 - Correção de Bug) ---
         function getTaskCountdown(task) {
             const now = new Date();
             
             const [year, month, day] = task.date.split('-').map(Number);
             let taskTime = [0, 0]; // Default 00:00
-            if (task.time) { 
-                taskTime = task.time.split(':').map(Number);
+            
+            // --- CORREÇÃO AQUI ---
+            // Verifica se task.time existe e não está vazio
+            if (task.time && task.time.includes(':')) { 
+                taskTime = task.time.split(':').map(Number); 
             }
             
             const taskDate = new Date(year, month - 1, day, taskTime[0], taskTime[1]);
             
             const diffMs = taskDate.getTime() - now.getTime();
-            const diffHours = Math.ceil(diffMs / (1000 * 60 * 60)); // Horas restantes
             
-            if (diffHours < 0) return { text: "Atrasada", color: "rose" };
-            if (diffHours === 0) return { text: "Agora!", color: "rose" };
+            // Se já passou há mais de um dia, apenas "Atrasada"
+            if (diffMs < -86400000) { // -24 horas
+                 return { text: "Atrasada", color: "slate" };
+            }
+            // Se passou hoje
+            if (diffMs < 0) {
+                 return { text: "Atrasada", color: "rose" };
+            }
+            
+            const diffHours = Math.ceil(diffMs / (1000 * 60 * 60)); // Horas restantes
             
             // LÓGICA DE 12 HORAS
             if (diffHours <= 12) {
@@ -768,7 +773,7 @@
             
             // LÓGICA DE DIAS
             // Recalcula a diferença em dias a partir da *meia-noite de hoje*
-            const diffDays = Math.ceil((taskDate.getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24));
+            const diffDays = Math.ceil((new Date(year, month - 1, day).getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24));
             
             if (diffDays === 1) return { text: "1 dia", color: "rose" };
             if (diffDays <= 4) return { text: `${diffDays} dias`, color: "orange" };
@@ -801,10 +806,11 @@
             }
             
             return upcomingTasks.map(task => {
-                const countdown = getTaskCountdown(task); // <-- USA A NOVA FUNÇÃO
-                const isCompleted = task.completed;
-                
-                let colorClass = '';
+            // CORREÇÃO v2.3.3: A função getTaskCountdown foi movida para o escopo global (ver Funções Auxiliares)
+            const countdown = getTaskCountdown(task); // <-- USA A NOVA FUNÇÃO GLOBAL
+            const isCompleted = task.completed;
+            
+            let colorClass = '';
                 if (isCompleted) {
                      colorClass = 'bg-slate-100 text-slate-400 border-slate-200 dark:bg-slate-600 dark:text-slate-400 dark:border-slate-500';
                 } else if (countdown.color === 'rose') {
@@ -1207,6 +1213,8 @@
 
         // --- CALENDÁRIO SIMPLES (v2.3.0) ---
         function renderTaskCalendar() {
+            // CORREÇÃO v2.3.1: FullCalendar não precisa desta função, 
+            // mas o calendário simples sim.
             const year = currentCalendarDate.getFullYear();
             const month = currentCalendarDate.getMonth(); // 0-11
             const monthName = currentCalendarDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
@@ -1259,10 +1267,11 @@
                     </div>
                 </div>
             `;
-            // NÃO chama o initializeFullCalendar aqui
             return html;
         }
         
+        // --- CALENDÁRIO FULLCALENDAR (BUGADO E REMOVIDO) ---
+        // function initializeFullCalendar() { ... }
         
         // --- PÁGINA DE OBJETIVOS (v2.2.2 - CORREÇÃO) ---
         function renderGoalStats() {
@@ -1898,14 +1907,16 @@
         
         // --- Funções Auxiliares (Modal de Confirmação) ---
         
-        // --- NOVA FUNÇÃO DE CONTAGEM REGRESSIVA (v2.3.0) ---
+        // --- FUNÇÃO DE CONTAGEM REGRESSIVA (v2.3.3 - CORRIGIDA E MOVIDA) ---
         function getTaskCountdown(task) {
             const now = new Date();
             
             const [year, month, day] = task.date.split('-').map(Number);
             let taskTime = [0, 0]; // Default 00:00
-            if (task.time) { 
-                taskTime = task.time.split(':').map(Number);
+            
+            // Verifica se task.time existe e não está vazio
+            if (task.time && task.time.includes(':')) { 
+                taskTime = task.time.split(':').map(Number); 
             }
             
             const taskDate = new Date(year, month - 1, day, taskTime[0], taskTime[1]);
@@ -1932,6 +1943,7 @@
             // Recalcula a diferença em dias a partir da *meia-noite de hoje*
             const diffDays = Math.ceil((new Date(year, month - 1, day).getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24));
             
+            if (diffDays === 0) return { text: "Hoje", color: "rose" }; // Fallback para tarefas sem hora
             if (diffDays === 1) return { text: "1 dia", color: "rose" };
             if (diffDays <= 4) return { text: `${diffDays} dias`, color: "orange" };
             return { text: `${diffDays} dias`, color: "emerald" };
@@ -2079,4 +2091,6 @@
 
 </body>
 </html>
+
+
 
