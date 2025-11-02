@@ -36,6 +36,9 @@
     <!-- Chart.js (Para os gráficos) -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
+    <!-- FullCalendar (Para Calendário Avançado) -->
+    <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.14/index.global.min.js'></script>
+    
     <!-- Firebase SDKs -->
     <script type="module">
         // Importações do Firebase
@@ -67,7 +70,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "2.1.0 (Mobile-First Redesign)";
+        const appVersion = "2.2.0 (Calendário Avançado)";
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -81,8 +84,9 @@
         };
         // ----------------------------------------------------
         
-        // Objeto global para guardar instâncias dos gráficos
+        // Objeto global para guardar instâncias dos gráficos e calendário
         window.myCharts = {};
+        window.myCalendar = null;
         
         let db, auth, userId, appId;
         let dbPathPrefix = '';
@@ -101,9 +105,10 @@
         // Estado da UI
         let authState = 'VERIFICANDO'; // 'VERIFICANDO', 'LOGADO', 'DESLOGADO'
         let currentPage = 'main'; // main, journalView, taskCalendar, progress
-        let currentModal = null; // addRoutine, addTask, addGoal, settings
+        let currentModal = null; // addRoutine, addTask, addGoal, settings, taskDetails
         let currentCalendarDate = new Date();
         let currentTheme = 'light'; // 'light' ou 'dark'
+        let selectedTask = null; // Guarda a tarefa clicada no calendário
         
         // --- Fonte Única de Verdade para "Hoje" (BASEADO NO LOCAL) ---
         const todayDate = new Date();
@@ -148,7 +153,8 @@
                 '/',
                 'https://cdn.tailwindcss.com',
                 'https://unpkg.com/lucide@0.395.0/dist/umd/lucide.min.js',
-                'https://cdn.jsdelivr.net/npm/chart.js',
+                'https://cdn.jsdelivr.net/npm/chart.js', 
+                'https://cdn.jsdelivr.net/npm/fullcalendar@6.1.14/index.global.min.js', // <-- NOVO
                 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js',
                 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js',
                 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js',
@@ -202,7 +208,7 @@
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register(swUrl)
-                    .then(registration => console.log('Service Worker v2.1.0 registrado', registration.scope))
+                    .then(registration => console.log('Service Worker v2.2.0 registrado', registration.scope))
                     .catch(error => console.error('Falha no registro do Service Worker', error));
             });
         }
@@ -363,12 +369,18 @@
             if (currentPage === 'progress') {
                 renderAllCharts(); // Redesenha os gráficos com as novas cores
             }
+            if (currentPage === 'taskCalendar') {
+                 // Destrói e recria o calendário para aplicar o tema
+                 if (window.myCalendar) {
+                    window.myCalendar.destroy();
+                 }
+                 initializeFullCalendar();
+            }
         }
         
         function updateChartColors() {
              if (typeof Chart === 'undefined') return;
              const isDark = document.documentElement.classList.contains('dark');
-             // Cores do Tailwind
              Chart.defaults.color = isDark ? '#94a3b8' : '#334155'; // slate-400 / slate-700
              Chart.defaults.borderColor = isDark ? '#334155' : '#e2e8f0'; // slate-700 / slate-200
         }
@@ -411,11 +423,10 @@
             const unsubRoutines = onSnapshot(routinesQuery, (snapshot) => {
                 allRoutines = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 console.log("Rotinas carregadas:", allRoutines.length);
-                if (auth.currentUser) render(); // Só renderiza se ainda estiver logado
+                if (auth.currentUser) render(); 
             }, (error) => console.error("Erro ao carregar rotinas:", error)); 
             unsubscribes.push(unsubRoutines); 
 
-            // ... (demais listeners de dados) ...
             const historyQuery = collection(db, `${dbPathPrefix}/routineHistory`);
             const unsubHistory = onSnapshot(historyQuery, (snapshot) => {
                 routineHistory = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -433,7 +444,12 @@
             const tasksQuery = collection(db, `${dbPathPrefix}/tasks`);
             const unsubTasks = onSnapshot(tasksQuery, (snapshot) => {
                 allTasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                console.log("Tarefas carregadas:", allTasks.length);
                 if (auth.currentUser) render();
+                if (currentPage === 'taskCalendar') {
+                    // Atualiza o calendário se ele estiver visível
+                    initializeFullCalendar();
+                }
             }, (error) => console.error("Erro ao carregar tarefas:", error));
             unsubscribes.push(unsubTasks);
 
@@ -494,6 +510,8 @@
                         case 'taskCalendar':
                             if(headerTitle) headerTitle.innerText = "Calendário";
                             appContainer.innerHTML = renderTaskCalendar();
+                            // Renderiza o calendário DEPOIS que o HTML (canvas) está na página
+                            initializeFullCalendar();
                             break;
                         case 'progress':
                             if(headerTitle) headerTitle.innerText = "Meu Progresso";
@@ -595,18 +613,10 @@
                         </button>
                     </div>
 
-                    <!-- 4. Objetivos -->
-                    <div class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-xl">
-                        <div class="flex justify-between items-center mb-4">
-                            <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100">Objetivos</h2>
-                            <button data-action="open-modal" data-modal="addGoal" class="text-sky-600 hover:text-sky-800 dark:hover:text-sky-400 p-1 rounded-full hover:bg-sky-100 dark:hover:bg-slate-700 transition-colors">
-                                <i data-lucide="plus-circle" class="w-7 h-7"></i>
-                            </button>
-                        </div>
-                        <div id="goals-list" class="space-y-3">
-                            ${renderActiveGoals()}
-                        </div>
-                    </div>
+                    <!-- 4. Objetivos (Movido para a página de Progresso, mas podemos manter aqui se quiser) -->
+                    <!-- <div class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-xl">
+                        ...
+                    </div> -->
                 </div>
             `;
         }
@@ -639,19 +649,21 @@
             }).join('');
         }
 
+        // --- LÓGICA DE TAREFAS ATUALIZADA (v2.2.0) ---
         function renderUpcomingTasks() {
-            const sevenDaysFromNow = new Date(todayDate);
-            sevenDaysFromNow.setDate(todayDate.getDate() + 7);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            
+            const sevenDaysFromNow = new Date(today);
+            sevenDaysFromNow.setDate(today.getDate() + 7);
 
             const upcomingTasks = allTasks.filter(task => {
-                if (task.completed) return false;
-                
                 const [year, month, day] = task.date.split('-').map(Number);
                 const taskDate = new Date(year, month - 1, day);
-                
-                return taskDate >= todayDate && taskDate <= sevenDaysFromNow;
+                return taskDate >= today && taskDate <= sevenDaysFromNow;
             });
 
+            // Ordena por data (mais próxima primeiro)
             upcomingTasks.sort((a, b) => a.date.localeCompare(b.date));
 
             if (upcomingTasks.length === 0) {
@@ -660,6 +672,7 @@
             
             return upcomingTasks.map(task => {
                 const daysRemaining = getDaysRemaining(task.date);
+                const isCompleted = task.completed;
                 
                 let colorClass = '';
                 let daysText = '';
@@ -671,6 +684,10 @@
                 } else { // 1, 0 dias
                     colorClass = 'bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-800 dark:text-rose-200 dark:border-rose-700';
                 }
+                
+                if (isCompleted) {
+                     colorClass = 'bg-slate-100 text-slate-400 border-slate-200 dark:bg-slate-600 dark:text-slate-400 dark:border-slate-500';
+                }
 
                 if (daysRemaining === 0) {
                     daysText = 'Hoje';
@@ -681,14 +698,14 @@
                 }
 
                 return `
-                    <div class="flex items-center justify-between bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 p-4 rounded-lg">
-                        <span class="text-xl text-slate-800 dark:text-slate-100">${task.name}</span>
+                    <div class="flex items-center justify-between bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 p-4 rounded-lg ${isCompleted ? 'opacity-60' : ''}">
+                        <span class="text-xl text-slate-800 dark:text-slate-100 ${isCompleted ? 'line-through' : ''}">${task.name}</span>
                         <div class="flex items-center space-x-3">
                             <span class="font-bold text-sm px-2.5 py-0.5 rounded-full border ${colorClass}">
                                 ${daysText}
                             </span>
-                            <button data-action="complete-task" data-id="${task.id}" class="text-emerald-500 hover:text-emerald-700 transition-colors">
-                                <i data-lucide="check-circle" class="w-6 h-6"></i>
+                            <button data-action="toggle-task" data-id="${task.id}" class="${isCompleted ? 'text-slate-400 hover:text-slate-600' : 'text-emerald-500 hover:text-emerald-700'} transition-colors">
+                                <i data-lucide="${isCompleted ? 'check-circle-2' : 'circle'}" class="w-6 h-6"></i>
                             </button>
                         </div>
                     </div>
@@ -975,11 +992,9 @@
             // Calcula porcentagem
             const percentageData = data.map((completedCount, month) => {
                 let totalDaysInMonth = daysInMonth[month];
-                // Se for o mês atual, conta apenas os dias até hoje
                 if(month === currentMonth) {
                     totalDaysInMonth = todayDate.getDate();
                 }
-                // Se for mês futuro, zera
                 if (month > currentMonth) {
                     totalDaysInMonth = 0;
                 }
@@ -1068,64 +1083,88 @@
             return html;
         }
 
+        // --- CALENDÁRIO AVANÇADO (v2.2.0) ---
         function renderTaskCalendar() {
-            const year = currentCalendarDate.getFullYear();
-            const month = currentCalendarDate.getMonth(); // 0-11
-            const monthName = currentCalendarDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
-
-            const firstDayOfMonth = new Date(year, month, 1).getDay(); // 0=Dom, 1=Seg, ...
-            const daysInMonth = new Date(year, month + 1, 0).getDate();
-            
-            const daysOfWeek = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
-
-            let html = `
-                <div class="p-4">
-                    <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-xl max-w-5xl mx-auto overflow-hidden">
-                        <!-- Header do Calendário -->
-                        <div class="flex justify-between items-center p-6 border-b border-slate-200 dark:border-slate-700">
-                            <button data-action="calendar-prev" class="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 dark:hover:text-slate-100 transition-colors">
-                                <i data-lucide="chevron-left" class="w-6 h-6"></i>
-                            </button>
-                            <h2 class="text-2xl font-bold text-sky-700 dark:text-sky-500 capitalize">${monthName}</h2>
-                            <button data-action="calendar-next" class="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 dark:hover:text-slate-100 transition-colors">
-                                <i data-lucide="chevron-right" class="w-6 h-6"></i>
-                            </button>
-                        </div>
-
-                        <!-- Grid dos Dias -->
-                        <div class="grid grid-cols-7">
-                            <!-- Cabeçalho dos dias da semana -->
-                            ${daysOfWeek.map(day => `<div class="text-center font-semibold text-slate-500 dark:text-slate-400 p-2 border-b border-slate-200 dark:border-slate-700 text-sm">${day}</div>`).join('')}
-                            
-                            <!-- Dias em branco (início) -->
-                            ${Array(firstDayOfMonth).fill('').map(() => `<div class="border-r border-b border-slate-200 dark:border-slate-700 h-28"></div>`).join('')}
-
-                            <!-- Dias do mês -->
-                            ${Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
-                                const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                                const tasksForDay = allTasks.filter(task => task.date === dateStr);
-                                const isToday = dateStr === todayString;
-
-                                return `
-                                    <div class="border-r border-b border-slate-200 dark:border-slate-700 h-28 p-1.5 overflow-y-auto relative">
-                                        <div class="font-semibold text-sm ${isToday ? 'bg-sky-600 text-white rounded-full w-6 h-6 flex items-center justify-center' : 'text-slate-700 dark:text-slate-300'}">${day}</div>
-                                        <div class="mt-1 space-y-1">
-                                            ${tasksForDay.map(task => `
-                                                <div class="text-xs p-1 rounded font-medium ${task.completed ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-800 dark:text-emerald-200 line-through' : 'bg-sky-100 text-sky-800 dark:bg-sky-800 dark:text-sky-200'}">
-                                                    ${task.name}
-                                                </div>
-                                            `).join('')}
-                                        </div>
-                                    </div>
-                                `;
-                            }).join('')}
-                        </div>
+            // Apenas o container. O FullCalendar será inicializado depois.
+            return `
+                <div id="calendar-container" class="p-4">
+                    <div id="calendar" class="bg-white dark:bg-slate-800 rounded-2xl shadow-xl p-4">
+                        <!-- FullCalendar será renderizado aqui -->
                     </div>
                 </div>
             `;
-            return html;
         }
+        
+        function initializeFullCalendar() {
+            if (typeof FullCalendar === 'undefined') {
+                 console.error("FullCalendar não foi carregado.");
+                 return;
+            }
+            
+            const calendarEl = document.getElementById('calendar');
+            if (!calendarEl) return;
+            
+            // Destrói o calendário antigo antes de desenhar um novo
+            if (window.myCalendar) {
+                window.myCalendar.destroy();
+            }
+            
+            // Formata as tarefas para o FullCalendar
+            const formattedTasks = allTasks.map(task => ({
+                id: task.id,
+                title: task.name,
+                start: task.date,
+                allDay: true,
+                // Adiciona classes customizadas
+                className: task.completed 
+                    ? 'bg-emerald-100 border-emerald-300 text-emerald-800 dark:bg-emerald-900 dark:border-emerald-700 dark:text-emerald-300 opacity-70' 
+                    : 'bg-sky-100 border-sky-300 text-sky-800 dark:bg-sky-900 dark:border-sky-700 dark:text-sky-300',
+                extendedProps: {
+                    completed: task.completed,
+                    name: task.name
+                }
+            }));
+            
+            const isDark = document.documentElement.classList.contains('dark');
 
+            window.myCalendar = new FullCalendar.Calendar(calendarEl, {
+                plugins: [ 'dayGrid', 'timeGrid', 'list' ],
+                initialView: 'dayGridMonth',
+                locale: 'pt-br', // Tradução
+                buttonText: { // Tradução dos botões
+                    today: 'Hoje',
+                    month: 'Mês',
+                    week: 'Semana',
+                    day: 'Dia',
+                    list: 'Lista'
+                },
+                headerToolbar: {
+                    left: 'prev,next today',
+                    center: 'title',
+                    right: 'dayGridMonth,timeGridWeek,timeGridDay'
+                },
+                events: formattedTasks,
+                // --- Ação de clique para excluir/desmarcar ---
+                eventClick: (info) => {
+                    const taskId = info.event.id;
+                    const task = allTasks.find(t => t.id === taskId);
+                    if (task) {
+                        selectedTask = task; // Salva a tarefa selecionada
+                        currentModal = 'taskDetails'; // Abre o novo modal
+                        renderModal();
+                    }
+                }
+            });
+            
+            window.myCalendar.render();
+            
+            // Força o tema escuro do Tailwind no FullCalendar
+            if(isDark) {
+                calendarEl.querySelectorAll('.fc-daygrid-day-frame, .fc-col-header-cell, .fc-list-table, .fc-list-day-frame').forEach(el => el.style.backgroundColor = '#1e293b'); // slate-800
+                calendarEl.querySelectorAll('.fc-list-day-frame').forEach(el => el.style.borderColor = '#334155'); // slate-7a00
+            }
+        }
+        
         // --- PÁGINA DE OBJETIVOS (v2.1.0) ---
         function renderGoalStats() {
             const activeGoals = allGoals.filter(goal => !goal.completed);
@@ -1133,7 +1172,12 @@
 
             return `
                 <div class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-xl">
-                    <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100 mb-6">Meus Objetivos</h2>
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100">Objetivos</h2>
+                        <button data-action="open-modal" data-modal="addGoal" class="text-sky-600 hover:text-sky-800 dark:hover:text-sky-400 p-1 rounded-full hover:bg-sky-100 dark:hover:bg-slate-700 transition-colors">
+                            <i data-lucide="plus-circle" class="w-7 h-7"></i>
+                        </button>
+                    </div>
                     
                     <!-- Objetivos Ativos -->
                     <div>
@@ -1187,6 +1231,7 @@
         function renderModal() {
             const modalContainer = document.getElementById('modal-container');
             if (!currentModal) {
+                selectedTask = null; // Limpa a tarefa selecionada
                 modalContainer.innerHTML = '';
                 return;
             }
@@ -1229,7 +1274,6 @@
                         </button>
                     `;
                     break;
-                // --- NOVO MODAL DE CONFIGURAÇÕES ---
                 case 'settings':
                     modalTitle = 'Configurações';
                     modalContent = `
@@ -1255,6 +1299,40 @@
                             
                             <!-- Versão do App -->
                             <p class="text-center text-sm text-slate-400 dark:text-slate-500">Versão: ${appVersion}</p>
+                        </div>
+                    `;
+                    break;
+                // --- NOVO MODAL DE DETALHES DA TAREFA ---
+                case 'taskDetails':
+                    if (!selectedTask) {
+                        currentModal = null;
+                        return;
+                    }
+                    modalTitle = 'Detalhes da Tarefa';
+                    const isCompleted = selectedTask.completed;
+                    const toggleButtonText = isCompleted ? 'Marcar como Pendente' : 'Concluir Tarefa';
+                    const toggleButtonIcon = isCompleted ? 'x-circle' : 'check-circle';
+                    const toggleButtonClass = isCompleted ? 'bg-slate-500 hover:bg-slate-600' : 'bg-emerald-600 hover:bg-emerald-700';
+                    
+                    modalContent = `
+                        <div class="space-y-6">
+                            <h4 class="text-2xl font-semibold text-slate-800 dark:text-slate-100">${selectedTask.name}</h4>
+                            <p class="text-lg text-slate-600 dark:text-slate-300">
+                                <i data-lucide="calendar" class="inline-block w-5 h-5 mr-2"></i>
+                                ${new Date(selectedTask.date + 'T00:00:00').toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' })}
+                            </p>
+                            
+                            <!-- Botão de (Des)Marcar -->
+                            <button data-action="toggle-task" data-id="${selectedTask.id}" class="${toggleButtonClass} flex items-center justify-center space-x-3 w-full text-white text-lg font-semibold py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition-all">
+                                <i data-lucide="${toggleButtonIcon}" class="w-5 h-5"></i>
+                                <span>${toggleButtonText}</span>
+                            </button>
+                            
+                            <!-- Botão de Excluir -->
+                            <button data-action="delete-task" data-id="${selectedTask.id}" class="flex items-center justify-center space-x-3 w-full bg-rose-600 text-white text-lg font-semibold py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition-all hover:bg-rose-700">
+                                <i data-lucide="trash-2" class="w-5 h-5"></i>
+                                <span>Excluir Tarefa</span>
+                            </button>
                         </div>
                     `;
                     break;
@@ -1357,18 +1435,17 @@
                 // Ações de Itens (CRUD)
                 if (action === 'toggle-routine') handleToggleRoutine(target);
                 if (action === 'delete-routine') handleDeleteRoutine(target.dataset.id);
-                if (action === 'complete-task') handleCompleteTask(target.dataset.id);
+                if (action === 'toggle-task') handleToggleTask(target.dataset.id); // <-- MUDADO
+                if (action === 'delete-task') handleDeleteTask(target.dataset.id); // <-- NOVO
                 if (action === 'complete-goal') handleCompleteGoal(target.dataset.id, target.checked);
                 if (action === 'delete-goal') handleDeleteGoal(target.dataset.id);
                 
                 // Ações do Calendário
                 if (action === 'calendar-prev') {
-                    currentCalendarDate.setMonth(currentCalendarDate.getMonth() - 1);
-                    render();
+                    window.myCalendar?.prev();
                 }
                 if (action === 'calendar-next') {
-                    currentCalendarDate.setMonth(currentCalendarDate.getMonth() + 1);
-                    render();
+                    window.myCalendar?.next();
                 }
             });
             
@@ -1413,6 +1490,7 @@
         }
         
         async function handleDeleteRoutine(routineId) {
+            // Confirmação já existe!
             showConfirmationModal("Tem certeza que deseja excluir esta rotina? Todo o histórico dela será perdido.", async () => {
                 if (!userId) return;
                 try {
@@ -1501,17 +1579,47 @@
             }
         }
         
-        async function handleCompleteTask(taskId) {
+        // --- LÓGICA DE TAREFA ATUALIZADA (v2.2.0) ---
+        async function handleToggleTask(taskId) {
             if (!userId) return;
+            const task = allTasks.find(t => t.id === taskId);
+            if (!task) {
+                console.error("Tarefa não encontrada!");
+                return;
+            }
+            
             try {
                 const taskDocRef = doc(db, `${dbPathPrefix}/tasks`, taskId);
                 await updateDoc(taskDocRef, {
-                    completed: true
+                    completed: !task.completed // Inverte o estado
                 });
-            } catch (error)
- {
-                console.error("Erro ao completar tarefa:", error);
+                // Fecha o modal de detalhes, se estiver aberto
+                if (currentModal === 'taskDetails') {
+                    currentModal = null;
+                    renderModal();
+                }
+                // O listener onSnapshot vai atualizar a UI
+            } catch (error) {
+                console.error("Erro ao (des)marcar tarefa:", error);
             }
+        }
+        
+        async function handleDeleteTask(taskId) {
+            if (!userId) return;
+            
+            showConfirmationModal("Tem certeza que deseja excluir esta tarefa?", async () => {
+                try {
+                    const taskDocRef = doc(db, `${dbPathPrefix}/tasks`, taskId);
+                    await deleteDoc(taskDocRef);
+                    
+                    // Fecha o modal de detalhes
+                    currentModal = null;
+                    renderModal();
+                    // O listener onSnapshot vai atualizar a UI
+                } catch (error) {
+                    console.error("Erro ao excluir tarefa:", error);
+                }
+            });
         }
         
         async function handleAddGoal() {
@@ -1661,6 +1769,27 @@
              --tw-ring-shadow: var(--tw-ring-inset) 0 0 0 calc(3px + var(--tw-ring-offset-width)) var(--tw-ring-color);
              box-shadow: var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow, 0 0 #0000);
              --tw-ring-opacity: 0.5;
+        }
+        
+        /* Estilos do FullCalendar para Dark Mode */
+        .dark .fc-daygrid-day-frame, .dark .fc-col-header-cell, .dark .fc-list-table, .dark .fc-list-day-frame, .dark .fc-timegrid-slot-lane {
+            background-color: #1e293b !important; /* slate-800 */
+        }
+        .dark .fc-list-event:hover td {
+            background-color: #334155 !important; /* slate-700 */
+        }
+        .dark .fc-day-today {
+            background-color: #1e293b !important; /* slate-800, mas o FullCalendar pode sobrescrever */
+        }
+        .dark .fc-toolbar-title {
+            color: #f1f5f9; /* slate-100 */
+        }
+        .dark .fc .fc-button-primary {
+            background-color: #334155; /* slate-700 */
+            border-color: #475569; /* slate-600 */
+        }
+        .dark .fc .fc-button-primary:hover {
+            background-color: #475569; /* slate-600 */
         }
     </style>
 </head>
