@@ -1,0 +1,1152 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PWA Foco TDAH</title>
+    
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Font: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <!-- Lucide Icons (para ícones) -->
+    <script src="https://unpkg.com/lucide@0.395.0/dist/umd/lucide.min.js"></script>
+    
+    <!-- Firebase SDKs -->
+    <script type="module">
+        // Importações do Firebase
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { 
+            getAuth, 
+            signInAnonymously, 
+            signInWithCustomToken, 
+            onAuthStateChanged,
+            setPersistence,
+            browserLocalPersistence
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { 
+            getFirestore, 
+            doc, 
+            getDoc, 
+            setDoc, 
+            addDoc, 
+            updateDoc, 
+            deleteDoc, 
+            onSnapshot, 
+            collection, 
+            query, 
+            where, 
+            writeBatch,
+            getDocs
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- Configuração do Firebase ---
+        // Estas variáveis ( __firebase_config, __app_id, __initial_auth_token) 
+        // são injetadas pelo ambiente.
+        
+        let db, auth, userId, appId;
+        let dbPathPrefix = '';
+
+        // Arrays para guardar os dados do Firestore
+        let allRoutines = [];
+        let routineHistory = [];
+        let journalEntries = [];
+        let allTasks = [];
+        let allGoals = [];
+
+        // Estado da UI
+        let currentPage = 'main'; // main, routineStats, journalView, taskCalendar, goalView
+        let currentModal = null; // null, 'addRoutine', 'addTask', 'addGoal'
+        let currentCalendarDate = new Date();
+        
+        // --- Fonte Única de Verdade para "Hoje" (BASEADO NO LOCAL) ---
+        const todayDate = new Date();
+        todayDate.setHours(0, 0, 0, 0); // Zera para meia-noite local
+
+        // Função auxiliar para formatar YYYY-MM-DD local
+        function getLocalYYYYMMDD(date) {
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+
+        let todayString = getLocalYYYYMMDD(todayDate); // "YYYY-MM-DD" local
+        let todayFullDate = new Date().toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' });
+        // --- Fim da Fonte de Verdade ---
+
+
+        // --- PWA (Manifest & Service Worker) ---
+        
+        // 1. Manifesto (inline)
+        const manifest = {
+            "name": "Foco TDAH",
+            "short_name": "Foco",
+            "start_url": ".",
+            "display": "standalone",
+            "background_color": "#f1f5f9", // bg-slate-100
+            "theme_color": "#0ea5e9", // bg-sky-500
+            "description": "Seu assistente pessoal para rotinas, tarefas e foco.",
+            "icons": [
+                { "src": "https://placehold.co/192x192/0ea5e9/white?text=Foco&font=sans-serif", "type": "image/png", "sizes": "192x192" },
+                { "src": "https://placehold.co/512x512/0ea5e9/white?text=Foco&font=sans-serif", "type": "image/png", "sizes": "512x512" }
+            ]
+        };
+        const manifestString = JSON.stringify(manifest);
+        const manifestUrl = 'data:application/json;charset=utf-8,' + encodeURIComponent(manifestString);
+        document.querySelector('head').insertAdjacentHTML('beforeend', `<link rel="manifest" href="${manifestUrl}">`);
+
+        // 2. Service Worker (inline)
+        const swScript = `
+            const CACHE_NAME = 'foco-tdah-cache-v1';
+            const urlsToCache = [
+                '/',
+                'https://cdn.tailwindcss.com',
+                'https://unpkg.com/lucide@0.395.0/dist/umd/lucide.min.js',
+                'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js',
+                'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js',
+                'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js',
+                'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap',
+                'https://fonts.gstatic.com/s/inter/v13/UcC73FwrK3iLTeHuS_fvQtMwCp50KnMa1ZL7.woff2'
+            ];
+
+            self.addEventListener('install', event => {
+                event.waitUntil(
+                    caches.open(CACHE_NAME)
+                        .then(cache => {
+                            console.log('Cache aberto');
+                            return cache.addAll(urlsToCache);
+                        })
+                );
+            });
+
+            self.addEventListener('fetch', event => {
+                event.respondWith(
+                    caches.match(event.request)
+                        .then(response => {
+                            if (response) {
+                                return response;
+                            }
+                            return fetch(event.request);
+                        })
+                );
+            });
+        `;
+        const swUrl = 'data:application/javascript,' + encodeURIComponent(swScript);
+
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register(swUrl)
+                    .then(registration => console.log('Service Worker registrado com sucesso:', registration.scope))
+                    .catch(error => console.log('Falha no registro do Service Worker:', error));
+            });
+        }
+
+        // --- Inicialização ---
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            initializeAppFirebase();
+            setupEventListeners();
+            render();
+        });
+
+        async function initializeAppFirebase() {
+            try {
+                const firebaseConfigStr = typeof __firebase_config !== 'undefined' ? __firebase_config : '{}';
+                const firebaseConfig = JSON.parse(firebaseConfigStr);
+                
+                appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+                if (!firebaseConfig.apiKey) {
+                    console.error("Configuração do Firebase não encontrada.");
+                    document.getElementById('app-container').innerHTML = `<p class="text-red-500 p-4">Erro: Configuração do Firebase não encontrada.</p>`;
+                    return;
+                }
+
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                
+                // Persistência local para manter o usuário logado
+                await setPersistence(auth, browserLocalPersistence);
+
+                console.log("Firebase inicializado. AppID:", appId);
+
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        console.log("Usuário autenticado:", userId);
+                        dbPathPrefix = `/artifacts/${appId}/users/${userId}`;
+                        loadAllData();
+                    } else {
+                        console.log("Nenhum usuário logado, tentando autenticação...");
+                        await authenticateUser();
+                    }
+                });
+
+            } catch (error) {
+                console.error("Erro ao inicializar Firebase:", error);
+                document.getElementById('app-container').innerHTML = `<p class="text-red-500 p-4">Erro ao conectar com o banco de dados.</p>`;
+            }
+        }
+
+        async function authenticateUser() {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    console.log("Autenticando com Custom Token...");
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    console.log("Autenticando anonimamente...");
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Erro na autenticação:", error);
+            }
+        }
+
+        // --- Carregamento de Dados (Firestore) ---
+
+        function loadAllData() {
+            if (!userId) return;
+            console.log("Carregando dados de:", dbPathPrefix);
+            
+            // Carregar Rotinas
+            const routinesQuery = collection(db, `${dbPathPrefix}/routines`);
+            onSnapshot(routinesQuery, (snapshot) => {
+                allRoutines = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                console.log("Rotinas carregadas:", allRoutines.length);
+                render();
+            });
+
+            // Carregar Histórico de Rotinas
+            const historyQuery = collection(db, `${dbPathPrefix}/routineHistory`);
+            onSnapshot(historyQuery, (snapshot) => {
+                routineHistory = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                console.log("Histórico de rotinas carregado:", routineHistory.length);
+                render();
+            });
+
+            // Carregar Diário
+            const journalQuery = collection(db, `${dbPathPrefix}/journalEntries`);
+            onSnapshot(journalQuery, (snapshot) => {
+                journalEntries = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                console.log("Entradas do diário carregadas:", journalEntries.length);
+                render();
+            });
+
+            // Carregar Tarefas
+            const tasksQuery = collection(db, `${dbPathPrefix}/tasks`);
+            onSnapshot(tasksQuery, (snapshot) => {
+                allTasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                console.log("Tarefas carregadas:", allTasks.length);
+                render();
+            });
+
+            // Carregar Objetivos
+            const goalsQuery = collection(db, `${dbPathPrefix}/goals`);
+            onSnapshot(goalsQuery, (snapshot) => {
+                allGoals = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                console.log("Objetivos carregados:", allGoals.length);
+                render();
+            });
+        }
+
+        // --- Funções de Renderização (UI) ---
+
+        function render() {
+            const appContainer = document.getElementById('app-container');
+            if (!appContainer) return;
+
+            // Renderizar Header
+            document.getElementById('header-date').innerText = todayFullDate;
+
+            // Renderizar conteúdo principal
+            switch (currentPage) {
+                case 'main':
+                    appContainer.innerHTML = renderMainDashboard();
+                    renderTodayJournalEntry(); // Preenche o diário após o HTML ser inserido
+                    break;
+                case 'routineStats':
+                    appContainer.innerHTML = renderRoutineStats();
+                    break;
+                case 'journalView':
+                    appContainer.innerHTML = renderJournalView();
+                    break;
+                case 'taskCalendar':
+                    appContainer.innerHTML = renderTaskCalendar();
+                    break;
+                case 'goalView':
+                    appContainer.innerHTML = renderGoalView();
+                    break;
+            }
+
+            // Renderizar Modal
+            renderModal();
+            
+            // Atualizar ícones
+            if (typeof lucide !== 'undefined') {
+                lucide.createIcons();
+            }
+        }
+
+        function renderMainDashboard() {
+            return `
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 md:p-6">
+                    <!-- 1. Rotinas Diárias -->
+                    <div class="bg-white p-6 rounded-2xl shadow-xl">
+                        <div class="flex justify-between items-center mb-4">
+                            <h2 class="text-3xl font-bold text-slate-800">Rotinas</h2>
+                            <button data-action="open-modal" data-modal="addRoutine" class="text-sky-600 hover:text-sky-800 p-1 rounded-full hover:bg-sky-100 transition-colors">
+                                <i data-lucide="plus-circle" class="w-7 h-7"></i>
+                            </button>
+                        </div>
+                        <div id="routines-list" class="space-y-3">
+                            ${renderTodayRoutines()}
+                        </div>
+                    </div>
+
+                    <!-- 2. Diário -->
+                    <div class="bg-white p-6 rounded-2xl shadow-xl">
+                        <h2 class="text-3xl font-bold text-slate-800 mb-4">Diário de Hoje</h2>
+                        <textarea id="journal-textarea" class="w-full h-36 p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 transition-colors" placeholder="Como foi o seu dia?"></textarea>
+                        <button id="save-journal-btn" class="mt-4 w-full bg-sky-600 text-white text-lg font-bold py-3 px-4 rounded-lg hover:bg-sky-700 shadow-md hover:shadow-lg transition-all">
+                            Salvar Diário
+                        </button>
+                    </div>
+
+                    <!-- 3. Próximas Tarefas -->
+                    <div class="bg-white p-6 rounded-2xl shadow-xl">
+                        <div class="flex justify-between items-center mb-4">
+                            <h2 class="text-3xl font-bold text-slate-800">Próximas Tarefas</h2>
+                            <button data-action="open-modal" data-modal="addTask" class="text-sky-600 hover:text-sky-800 p-1 rounded-full hover:bg-sky-100 transition-colors">
+                                <i data-lucide="plus-circle" class="w-7 h-7"></i>
+                            </button>
+                        </div>
+                        <div id="tasks-list" class="space-y-3">
+                            ${renderUpcomingTasks()}
+                        </div>
+                    </div>
+
+                    <!-- 4. Objetivos -->
+                    <div class="bg-white p-6 rounded-2xl shadow-xl">
+                        <div class="flex justify-between items-center mb-4">
+                            <h2 class="text-3xl font-bold text-slate-800">Objetivos</h2>
+                            <button data-action="open-modal" data-modal="addGoal" class="text-sky-600 hover:text-sky-800 p-1 rounded-full hover:bg-sky-100 transition-colors">
+                                <i data-lucide="plus-circle" class="w-7 h-7"></i>
+                            </button>
+                        </div>
+                        <div id="goals-list" class="space-y-3">
+                            ${renderActiveGoals()}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderTodayRoutines() {
+            if (allRoutines.length === 0) {
+                return `<p class="text-slate-500">Nenhuma rotina criada. Adicione uma no botão '+' acima.</p>`;
+            }
+            return allRoutines.map(routine => {
+                const historyEntry = routineHistory.find(h => h.routineId === routine.id && h.date === todayString);
+                const isCompleted = historyEntry?.completed || false;
+                
+                return `
+                    <div class="flex items-center justify-between bg-slate-50 border border-slate-200 p-4 rounded-lg">
+                        <label class="flex items-center space-x-4 text-xl text-slate-800">
+                            <input type="checkbox" 
+                                   class="form-checkbox h-7 w-7 text-sky-600 rounded-md border-slate-300 focus:ring-sky-500" 
+                                   ${isCompleted ? 'checked' : ''}
+                                   data-action="toggle-routine"
+                                   data-routine-id="${routine.id}"
+                                   data-routine-name="${routine.name}"
+                                   data-history-id="${historyEntry?.id || ''}">
+                            <span class="${isCompleted ? 'line-through text-slate-400' : ''}">${routine.name}</span>
+                        </label>
+                        <button data-action="delete-routine" data-id="${routine.id}" class="text-slate-400 hover:text-rose-500 transition-colors">
+                            <i data-lucide="trash-2" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function renderUpcomingTasks() {
+            // LÓGICA CORRIGIDA PARA PRÓXIMOS 7 DIAS
+            
+            // Define o fim do período (hoje + 7 dias)
+            const sevenDaysFromNow = new Date(todayDate);
+            sevenDaysFromNow.setDate(todayDate.getDate() + 7);
+
+            const upcomingTasks = allTasks.filter(task => {
+                if (task.completed) return false;
+                
+                // Parse da data da tarefa para evitar fuso horário
+                const [year, month, day] = task.date.split('-').map(Number);
+                const taskDate = new Date(year, month - 1, day);
+                
+                // Compara datas (ambas estão com h/m/s zerados)
+                return taskDate >= todayDate && taskDate <= sevenDaysFromNow;
+            });
+
+            // Ordena por data (mais próxima primeiro)
+            upcomingTasks.sort((a, b) => a.date.localeCompare(b.date));
+
+            if (upcomingTasks.length === 0) {
+                return `<p class="text-slate-500">Nenhuma tarefa para os próximos 7 dias. Adicione uma no botão '+' acima.</p>`;
+            }
+            
+            return upcomingTasks.map(task => {
+                const daysRemaining = getDaysRemaining(task.date);
+                
+                let colorClass = '';
+                let daysText = '';
+
+                if (daysRemaining >= 5) { // 7, 6, 5 dias
+                    colorClass = 'bg-emerald-100 text-emerald-800 border-emerald-200';
+                } else if (daysRemaining >= 2) { // 4, 3, 2 dias
+                    colorClass = 'bg-orange-100 text-orange-800 border-orange-200';
+                } else { // 1, 0 dias
+                    colorClass = 'bg-rose-100 text-rose-800 border-rose-200';
+                }
+
+                if (daysRemaining === 0) {
+                    daysText = 'Hoje';
+                } else if (daysRemaining === 1) {
+                    daysText = '1 dia';
+                } else {
+                    daysText = `${daysRemaining} dias`;
+                }
+
+                return `
+                    <div class="flex items-center justify-between bg-slate-50 border border-slate-200 p-4 rounded-lg">
+                        <span class="text-xl text-slate-800">${task.name}</span>
+                        <div class="flex items-center space-x-3">
+                            <span class="font-bold text-sm px-2.5 py-0.5 rounded-full border ${colorClass}">
+                                ${daysText}
+                            </span>
+                            <button data-action="complete-task" data-id="${task.id}" class="text-emerald-500 hover:text-emerald-700 transition-colors">
+                                <i data-lucide="check-circle" class="w-6 h-6"></i>
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function renderActiveGoals() {
+            const activeGoals = allGoals.filter(goal => !goal.completed);
+            if (activeGoals.length === 0) {
+                return `<p class="text-slate-500">Nenhum objetivo ativo. Adicione um no botão '+' acima.</p>`;
+            }
+            return activeGoals.map(goal => `
+                <div class="flex items-center justify-between bg-slate-50 border border-slate-200 p-4 rounded-lg">
+                    <label class="flex items-center space-x-4 text-xl text-slate-800">
+                        <input type="checkbox" 
+                               class="form-checkbox h-7 w-7 text-emerald-600 rounded-md border-slate-300 focus:ring-emerald-500"
+                               data-action="complete-goal"
+                               data-id="${goal.id}">
+                        <span>${goal.name}</span>
+                    </label>
+                    <button data-action="delete-goal" data-id="${goal.id}" class="text-slate-400 hover:text-rose-500 transition-colors">
+                            <i data-lucide="trash-2" class="w-5 h-5"></i>
+                    </button>
+                </div>
+            `).join('');
+        }
+        
+        function renderTodayJournalEntry() {
+            const journalTextarea = document.getElementById('journal-textarea');
+            if (journalTextarea) {
+                const todayEntry = journalEntries.find(entry => entry.id === todayString);
+                journalTextarea.value = todayEntry ? todayEntry.text : '';
+            }
+        }
+
+        // --- Renderização das Páginas do Menu ---
+
+        function renderRoutineStats() {
+            // Lógica simples de estatística
+            const stats = { week: { completed: 0, total: 0 }, month: { completed: 0, total: 0 }, year: { completed: 0, total: 0 } };
+            const now = new Date();
+            const startOfWeek = new Date(now.setDate(now.getDate() - now.getDay()));
+            startOfWeek.setHours(0,0,0,0);
+            const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+            const startOfYear = new Date(now.getFullYear(), 0, 1);
+
+            routineHistory.forEach(h => {
+                const [year, month, day] = h.date.split('-').map(Number);
+                const entryDate = new Date(year, month - 1, day);
+                
+                if (entryDate >= startOfYear) {
+                    stats.year.total++;
+                    if (h.completed) stats.year.completed++;
+                }
+                if (entryDate >= startOfMonth) {
+                    stats.month.total++;
+                    if (h.completed) stats.month.completed++;
+                }
+                if (entryDate >= startOfWeek) {
+                    stats.week.total++;
+                    if (h.completed) stats.week.completed++;
+                }
+            });
+
+            return `
+                <div class="p-6">
+                    <h2 class="text-4xl font-bold text-slate-800 mb-8">Estatísticas de Rotinas</h2>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        ${createStatCard("Esta Semana", stats.week.completed, stats.week.total)}
+                        ${createStatCard("Este Mês", stats.month.completed, stats.month.total)}
+                        ${createStatCard("Este Ano", stats.year.completed, stats.year.total)}
+                    </div>
+                </div>
+            `;
+        }
+        
+        function createStatCard(title, completed, total) {
+            const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
+            return `
+                <div class="bg-white p-6 rounded-2xl shadow-xl text-center">
+                    <h3 class="text-2xl font-semibold text-slate-700">${title}</h3>
+                    <p class="text-6xl font-bold text-sky-600 my-4">${percentage}%</p>
+                    <p class="text-lg text-slate-500">${completed} de ${total} concluídas</p>
+                </div>
+            `;
+        }
+
+        function renderJournalView() {
+            // Organizado por mês (mais simples)
+            const entriesByMonth = {};
+            journalEntries.forEach(entry => {
+                const [year, month] = entry.id.split('-'); // YYYY-MM-DD
+                const monthKey = `${year}-${month}`;
+                if (!entriesByMonth[monthKey]) {
+                    entriesByMonth[monthKey] = [];
+                }
+                entriesByMonth[monthKey].push(entry);
+            });
+
+            // Ordena os meses
+            const sortedMonths = Object.keys(entriesByMonth).sort().reverse();
+            
+            let html = `<div class="p-6"><h2 class="text-4xl font-bold text-slate-800 mb-8">Meu Diário</h2><div class="space-y-8">`;
+
+            if (sortedMonths.length === 0) {
+                 html += `<p class="text-slate-500 text-center mt-8 text-lg">Nenhuma entrada no diário ainda.</p>`;
+            }
+
+            sortedMonths.forEach(monthKey => {
+                const [year, month] = monthKey.split('-');
+                const monthName = new Date(year, month - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+                
+                html += `<div class="bg-white p-6 rounded-2xl shadow-xl">
+                            <h3 class="text-3xl font-semibold text-sky-700 mb-5 capitalize">${monthName}</h3>
+                            <div class="space-y-5">`;
+                
+                // Ordena entradas do mês
+                entriesByMonth[monthKey].sort((a, b) => b.id.localeCompare(a.id)).forEach(entry => {
+                    const [y, m, d] = entry.id.split('-').map(Number);
+                    const entryDate = new Date(y, m - 1, d).toLocaleDateString('pt-BR', { day: 'numeric', month: 'short', year: 'numeric' });
+                    html += `
+                        <div class="border-b border-slate-200 pb-4">
+                            <p class="text-lg font-semibold text-slate-800">${entryDate}</p>
+                            <p class="text-slate-600 whitespace-pre-wrap mt-1">${entry.text}</p>
+                        </div>
+                    `;
+                });
+
+                html += `</div></div>`;
+            });
+
+            html += `</div></div>`;
+            return html;
+        }
+
+        function renderTaskCalendar() {
+            const year = currentCalendarDate.getFullYear();
+            const month = currentCalendarDate.getMonth(); // 0-11
+            const monthName = currentCalendarDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+
+            const firstDayOfMonth = new Date(year, month, 1).getDay(); // 0=Dom, 1=Seg, ...
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+            
+            const daysOfWeek = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+            let html = `
+                <div class="p-4 md:p-6">
+                    <div class="bg-white rounded-2xl shadow-xl max-w-5xl mx-auto">
+                        <!-- Header do Calendário -->
+                        <div class="flex justify-between items-center p-6 border-b border-slate-200">
+                            <button data-action="calendar-prev" class="p-2 rounded-full hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-colors">
+                                <i data-lucide="chevron-left" class="w-6 h-6"></i>
+                            </button>
+                            <h2 class="text-3xl font-bold text-sky-700 capitalize">${monthName}</h2>
+                            <button data-action="calendar-next" class="p-2 rounded-full hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-colors">
+                                <i data-lucide="chevron-right" class="w-6 h-6"></i>
+                            </button>
+                        </div>
+
+                        <!-- Grid dos Dias -->
+                        <div class="grid grid-cols-7">
+                            <!-- Cabeçalho dos dias da semana -->
+                            ${daysOfWeek.map(day => `<div class="text-center font-semibold text-slate-500 p-4 border-b border-slate-200">${day}</div>`).join('')}
+                            
+                            <!-- Dias em branco (início) -->
+                            ${Array(firstDayOfMonth).fill('').map(() => `<div class="border-r border-b border-slate-200 h-32"></div>`).join('')}
+
+                            <!-- Dias do mês -->
+                            ${Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
+                                const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                                const tasksForDay = allTasks.filter(task => task.date === dateStr);
+                                const isToday = dateStr === todayString;
+
+                                return `
+                                    <div class="border-r border-b border-slate-200 h-32 p-2 overflow-y-auto relative">
+                                        <div class="font-semibold text-lg ${isToday ? 'bg-sky-600 text-white rounded-full w-8 h-8 flex items-center justify-center' : 'text-slate-700'}">${day}</div>
+                                        <div class="mt-2 space-y-1">
+                                            ${tasksForDay.map(task => `
+                                                <div class="text-xs p-1 rounded font-medium ${task.completed ? 'bg-emerald-100 text-emerald-800 line-through' : 'bg-sky-100 text-sky-800'}">
+                                                    ${task.name}
+                                                </div>
+                                            `).join('')}
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+            return html;
+        }
+
+        function renderGoalView() {
+            const activeGoals = allGoals.filter(goal => !goal.completed);
+            const completedGoals = allGoals.filter(goal => goal.completed);
+
+            return `
+                <div class="p-6">
+                    <h2 class="text-4xl font-bold text-slate-800 mb-8">Meus Objetivos</h2>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <!-- Objetivos Não Concluídos -->
+                        <div class="bg-white p-6 rounded-2xl shadow-xl">
+                            <h3 class="text-3xl font-semibold text-slate-700 mb-5">Ativos</h3>
+                            <div class="space-y-4">
+                                ${activeGoals.length > 0 ? activeGoals.map(goal => `
+                                    <p class="text-xl text-slate-700 p-4 bg-slate-50 border border-slate-200 rounded-lg">${goal.name}</p>
+                                `).join('') : `<p class="text-slate-500 text-lg">Nenhum objetivo ativo.</p>`}
+                            </div>
+                        </div>
+                        
+                        <!-- Objetivos Concluídos -->
+                        <div class="bg-white p-6 rounded-2xl shadow-xl">
+                            <h3 class="text-3xl font-semibold text-slate-700 mb-5">Concluídos</h3>
+                            <div class="space-y-4">
+                                ${completedGoals.length > 0 ? completedGoals.map(goal => `
+                                    <p class="text-xl text-slate-400 line-through p-4 bg-slate-50 border border-slate-200 rounded-lg">${goal.name}</p>
+                                `).join('') : `<p class="text-slate-500 text-lg">Nenhum objetivo concluído ainda.</p>`}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // --- Renderização do Modal ---
+
+        function renderModal() {
+            const modalContainer = document.getElementById('modal-container');
+            if (!currentModal) {
+                modalContainer.innerHTML = '';
+                return;
+            }
+
+            let modalTitle = '';
+            let modalContent = '';
+
+            switch (currentModal) {
+                case 'addRoutine':
+                    modalTitle = 'Nova Rotina Diária';
+                    modalContent = `
+                        <label for="routine-name" class="block text-lg font-medium text-slate-700">Nome da Rotina</label>
+                        <input type="text" id="routine-name" class="mt-2 block w-full border border-slate-300 rounded-lg p-3 text-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500" placeholder="Ex: Tomar café da manhã">
+                        <button id="save-routine-btn" class="mt-6 w-full bg-sky-600 text-white font-bold text-lg py-3 px-4 rounded-lg hover:bg-sky-700 shadow-md hover:shadow-lg transition-all">
+                            Salvar Rotina
+                        </button>
+                    `;
+                    break;
+                case 'addTask':
+                    modalTitle = 'Nova Tarefa Agendada';
+                    modalContent = `
+                        <label for="task-name" class="block text-lg font-medium text-slate-700">Nome da Tarefa</label>
+                        <input type="text" id="task-name" class="mt-2 block w-full border border-slate-300 rounded-lg p-3 text-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500" placeholder="Ex: Consulta médica">
+                        
+                        <label for="task-date" class="block text-lg font-medium text-slate-700 mt-4">Data</label>
+                        <input type="date" id="task-date" value="${todayString}" class="mt-2 block w-full border border-slate-300 rounded-lg p-3 text-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500">
+                        
+                        <button id="save-task-btn" class="mt-6 w-full bg-sky-600 text-white font-bold text-lg py-3 px-4 rounded-lg hover:bg-sky-700 shadow-md hover:shadow-lg transition-all">
+                            Salvar Tarefa
+                        </button>
+                    `;
+                    break;
+                case 'addGoal':
+                    modalTitle = 'Novo Objetivo';
+                    modalContent = `
+                        <label for="goal-name" class="block text-lg font-medium text-slate-700">Nome do Objetivo</label>
+                        <input type="text" id="goal-name" class="mt-2 block w-full border border-slate-300 rounded-lg p-3 text-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500" placeholder="Ex: Ler 1 livro este mês">
+                        <button id="save-goal-btn" class="mt-6 w-full bg-sky-600 text-white font-bold text-lg py-3 px-4 rounded-lg hover:bg-sky-700 shadow-md hover:shadow-lg transition-all">
+                            Salvar Objetivo
+                        </button>
+                    `;
+                    break;
+            }
+
+            modalContainer.innerHTML = `
+                <div class="fixed inset-0 bg-black/70 backdrop-blur-sm z-40" data-action="close-modal"></div>
+                <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div class="bg-white w-full max-w-md p-6 rounded-2xl shadow-2xl">
+                        <div class="flex justify-between items-center mb-5">
+                            <h3 class="text-3xl font-bold text-slate-800">${modalTitle}</h3>
+                            <button data-action="close-modal" class="text-slate-400 hover:text-slate-600">
+                                <i data-lucide="x" class="w-8 h-8"></i>
+                            </button>
+                        </div>
+                        <div>
+                            ${modalContent}
+                        </div>
+                    </div>
+                </div>
+            `;
+            if (typeof lucide !== 'undefined') {
+                lucide.createIcons();
+            }
+        }
+
+        // --- Navegação e Event Listeners ---
+        
+        function setupEventListeners() {
+            document.body.addEventListener('click', (e) => {
+                const target = e.target.closest('[data-action]');
+                if (!target) return;
+
+                const action = target.dataset.action;
+
+                // Ações do Menu
+                if (action === 'open-menu') {
+                    document.getElementById('menu-sidebar').classList.remove('-translate-x-full');
+                    document.getElementById('menu-overlay').classList.remove('hidden');
+                }
+                if (action === 'close-menu') {
+                    document.getElementById('menu-sidebar').classList.add('-translate-x-full');
+                    document.getElementById('menu-overlay').classList.add('hidden');
+                }
+                if (action.startsWith('nav-')) {
+                    currentPage = action.split('-')[1];
+                    document.getElementById('menu-sidebar').classList.add('-translate-x-full');
+                    document.getElementById('menu-overlay').classList.add('hidden');
+                    render();
+                }
+
+                // Ações do Modal
+                if (action === 'open-modal') {
+                    currentModal = target.dataset.modal;
+                    renderModal();
+                }
+                if (action === 'close-modal') {
+                    currentModal = null;
+                    renderModal();
+                }
+
+                // Ações de Salvar (CRUD)
+                if (action === 'save-routine') handleAddRoutine();
+                if (action === 'save-task') handleAddTask();
+                if (action === 'save-goal') handleAddGoal();
+                if (action === 'save-journal') handleSaveJournal();
+
+                // Ações de Itens (CRUD)
+                if (action === 'toggle-routine') handleToggleRoutine(target);
+                if (action === 'delete-routine') handleDeleteRoutine(target.dataset.id);
+                if (action === 'complete-task') handleCompleteTask(target.dataset.id);
+                if (action === 'complete-goal') handleCompleteGoal(target.dataset.id, target.checked);
+                if (action === 'delete-goal') handleDeleteGoal(target.dataset.id);
+                
+                // Ações do Calendário
+                if (action === 'calendar-prev') {
+                    currentCalendarDate.setMonth(currentCalendarDate.getMonth() - 1);
+                    render();
+                }
+                if (action === 'calendar-next') {
+                    currentCalendarDate.setMonth(currentCalendarDate.getMonth() + 1);
+                    render();
+                }
+            });
+            
+            // Listener separado para os botões de salvar (pois eles são recriados)
+            document.body.addEventListener('click', e => {
+                if (e.target.id === 'save-journal-btn') {
+                    handleSaveJournal();
+                }
+                if (e.target.id === 'save-routine-btn') {
+                    handleAddRoutine();
+                }
+                if (e.target.id === 'save-task-btn') {
+                    handleAddTask();
+                }
+                if (e.target.id === 'save-goal-btn') {
+                    handleAddGoal();
+                }
+            });
+        }
+        
+        // --- Funções de Manipulação de Dados (CRUD) ---
+
+        async function handleAddRoutine() {
+            const input = document.getElementById('routine-name');
+            const name = input.value.trim();
+            if (name && userId) {
+                try {
+                    await addDoc(collection(db, `${dbPathPrefix}/routines`), {
+                        name: name,
+                        createdAt: new Date().toISOString()
+                    });
+                    currentModal = null;
+                    renderModal();
+                } catch (error) {
+                    console.error("Erro ao adicionar rotina:", error);
+                }
+            }
+        }
+        
+        async function handleDeleteRoutine(routineId) {
+            // Utilizando um modal customizado em vez de confirm()
+            showConfirmationModal("Tem certeza que deseja excluir esta rotina? Todo o histórico dela será perdido.", async () => {
+                if (!userId) return;
+                try {
+                    // 1. Deletar a rotina principal
+                    await deleteDoc(doc(db, `${dbPathPrefix}/routines`, routineId));
+                    
+                    // 2. Deletar histórico associado (em batch)
+                    const historyQuery = query(collection(db, `${dbPathPrefix}/routineHistory`), where("routineId", "==", routineId));
+                    const historySnapshot = await getDocs(historyQuery);
+                    const batch = writeBatch(db);
+                    historySnapshot.forEach(doc => {
+                        batch.delete(doc.ref);
+                    });
+                    await batch.commit();
+                    
+                    console.log("Rotina e histórico deletados.");
+                } catch (error) {
+                    console.error("Erro ao deletar rotina:", error);
+                }
+            });
+        }
+        
+        async function handleToggleRoutine(checkbox) {
+            const { routineId, routineName, historyId } = checkbox.dataset;
+            const isCompleted = checkbox.checked;
+
+            if (!userId) return;
+
+            try {
+                // Tenta encontrar um registro existente para hoje
+                const historyDocId = historyId || `${routineId}_${todayString}`;
+                const historyDocRef = doc(db, `${dbPathPrefix}/routineHistory`, historyDocId);
+                
+                await setDoc(historyDocRef, {
+                    routineId: routineId,
+                    routineName: routineName,
+                    date: todayString,
+                    completed: isCompleted
+                }, { merge: true }); // Usa setDoc com merge para criar ou atualizar
+                
+            } catch (error) {
+                console.error("Erro ao atualizar rotina:", error);
+            }
+        }
+        
+        async function handleSaveJournal() {
+            const textarea = document.getElementById('journal-textarea');
+            const text = textarea.value;
+            if (userId) {
+                try {
+                    const journalDocRef = doc(db, `${dbPathPrefix}/journalEntries`, todayString);
+                    await setDoc(journalDocRef, {
+                        text: text,
+                        lastUpdatedAt: new Date().toISOString()
+                    }, { merge: true });
+                    
+                    // Feedback visual
+                    const btn = document.getElementById('save-journal-btn');
+                    btn.innerText = 'Salvo!';
+                    btn.classList.add('bg-emerald-500', 'hover:bg-emerald-600');
+                    btn.classList.remove('bg-sky-600', 'hover:bg-sky-700');
+                    setTimeout(() => {
+                        btn.innerText = 'Salvar Diário';
+                        btn.classList.remove('bg-emerald-500', 'hover:bg-emerald-600');
+                        btn.classList.add('bg-sky-600', 'hover:bg-sky-700');
+                    }, 2000);
+                    
+                } catch (error) {
+                    console.error("Erro ao salvar diário:", error);
+                }
+            }
+        }
+        
+        async function handleAddTask() {
+            const name = document.getElementById('task-name').value.trim();
+            const date = document.getElementById('task-date').value;
+            if (name && date && userId) {
+                try {
+                    await addDoc(collection(db, `${dbPathPrefix}/tasks`), {
+                        name: name,
+                        date: date,
+                        completed: false,
+                        createdAt: new Date().toISOString()
+                    });
+                    currentModal = null;
+                    renderModal();
+                } catch (error) {
+                    console.error("Erro ao adicionar tarefa:", error);
+                }
+            }
+        }
+        
+        async function handleCompleteTask(taskId) {
+            if (!userId) return;
+            try {
+                const taskDocRef = doc(db, `${dbPathPrefix}/tasks`, taskId);
+                await updateDoc(taskDocRef, {
+                    completed: true
+                });
+            } catch (error)
+ {
+                console.error("Erro ao completar tarefa:", error);
+            }
+        }
+        
+        async function handleAddGoal() {
+            const name = document.getElementById('goal-name').value.trim();
+            if (name && userId) {
+                try {
+                    await addDoc(collection(db, `${dbPathPrefix}/goals`), {
+                        name: name,
+                        completed: false,
+                        createdAt: new Date().toISOString(),
+                        completedAt: null
+                    });
+                    currentModal = null;
+                    renderModal();
+                } catch (error) {
+                    console.error("Erro ao adicionar objetivo:", error);
+                }
+            }
+        }
+        
+        async function handleCompleteGoal(goalId, isCompleted) {
+             if (!userId) return;
+             // Esta função é chamada quando a caixa é marcada.
+             // O objetivo só desaparece ao ser concluído (isCompleted = true)
+             if (!isCompleted) return; // Não faz nada se "desmarcar" (embora ele vá sumir)
+             
+            try {
+                const goalDocRef = doc(db, `${dbPathPrefix}/goals`, goalId);
+                await updateDoc(goalDocRef, {
+                    completed: true,
+                    completedAt: new Date().toISOString()
+                });
+                // O onSnapshot cuidará de remover da UI
+            } catch (error) {
+                console.error("Erro ao completar objetivo:", error);
+            }
+        }
+        
+        async function handleDeleteGoal(goalId) {
+            showConfirmationModal("Tem certeza que deseja excluir este objetivo?", async () => {
+                if (!userId) return;
+                 try {
+                    await deleteDoc(doc(db, `${dbPathPrefix}/goals`, goalId));
+                } catch (error) {
+                    console.error("Erro ao deletar objetivo:", error);
+                }
+            });
+        }
+        
+        // --- Funções Auxiliares (Modal de Confirmação) ---
+        
+        // FUNÇÃO AUXILIAR CORRIGIDA
+        function getDaysRemaining(dateStr) {
+            const [year, month, day] = dateStr.split('-').map(Number);
+            const taskDate = new Date(year, month - 1, day); // Já está 'floored' (00:00)
+            
+            // USA A VARIÁVEL GLOBAL 'todayDate' (que também está 'floored')
+            const diffTime = taskDate.getTime() - todayDate.getTime();
+            
+            // Math.ceil é o mais correto para "dias restantes"
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+            
+            return diffDays < 0 ? 0 : diffDays; // Evita dias negativos
+        }
+
+        function showConfirmationModal(message, onConfirm) {
+            const modalContainer = document.getElementById('modal-container');
+            const confirmationId = 'modal-confirm-' + Date.now();
+            
+            const modalHtml = `
+                <div id="${confirmationId}" class="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div class="fixed inset-0 bg-black/70 backdrop-blur-sm" data-action="close-confirm"></div>
+                    <div class="bg-white w-full max-w-sm p-6 rounded-2xl shadow-2xl z-10">
+                        <h3 class="text-2xl font-semibold text-slate-800 mb-4">Confirmar Ação</h3>
+                        <p class="text-slate-600 mb-6 text-lg">${message}</p>
+                        <div class="flex justify-end space-x-3">
+                            <button data-action="close-confirm" class="px-5 py-2 bg-slate-200 text-slate-800 rounded-lg hover:bg-slate-300 font-semibold transition-colors">
+                                Cancelar
+                            </button>
+                            <button data-action="confirm-action" class="px-5 py-2 bg-rose-600 text-white rounded-lg hover:bg-rose-700 font-semibold transition-colors">
+                                Excluir
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            modalContainer.insertAdjacentHTML('beforeend', modalHtml);
+            
+            const modalElement = document.getElementById(confirmationId);
+
+            const handleConfirmationClick = (e) => {
+                const target = e.target.closest('[data-action]');
+                if (!target) return;
+
+                if (target.dataset.action === 'confirm-action') {
+                    onConfirm();
+                    modalElement.remove();
+                }
+                if (target.dataset.action === 'close-confirm') {
+                    modalElement.remove();
+                }
+            };
+            
+            modalElement.addEventListener('click', handleConfirmationClick);
+        }
+
+    </script>
+
+    <style>
+        /* Estilo base */
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        }
+        
+        /* Remove o spinner padrão de inputs[type=date] (opcional) */
+        input[type="date"]::-webkit-calendar-picker-indicator {
+            display: none;
+            -webkit-appearance: none;
+        }
+
+        /* Checkbox customizado */
+        .form-checkbox {
+            appearance: none;
+            -webkit-appearance: none;
+            padding: 0;
+            display: inline-block;
+            vertical-align: middle;
+            background-origin: border-box;
+            user-select: none;
+            flex-shrink: 0;
+            border-width: 2px;
+            cursor: pointer;
+            transition: all 0.15s ease-in-out;
+        }
+        .form-checkbox:checked {
+            background-color: currentColor;
+            background-image: url("data:image/svg+xml,%3csvg viewBox='0 0 16 16' fill='white' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M12.207 4.793a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0l-2-2a1 1 0 011.414-1.414L6.5 9.086l4.293-4.293a1 1 0 011.414 0z'/%3e%3c/svg%3e");
+            background-position: center;
+            background-repeat: no-repeat;
+            background-size: 100% 100%;
+        }
+        .form-checkbox:focus {
+             outline: 2px solid transparent;
+             outline-offset: 2px;
+             --tw-ring-offset-shadow: var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);
+             --tw-ring-shadow: var(--tw-ring-inset) 0 0 0 calc(3px + var(--tw-ring-offset-width)) var(--tw-ring-color);
+             box-shadow: var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow, 0 0 #0000);
+             --tw-ring-opacity: 0.5;
+        }
+    </style>
+</head>
+<body class="antialiased font-sans bg-slate-100">
+
+    <!-- Menu Lateral (Sidebar) -->
+    <div id="menu-overlay" data-action="close-menu" class="fixed inset-0 bg-black bg-opacity-60 z-10 hidden transition-opacity"></div>
+    <div id="menu-sidebar" class="fixed top-0 left-0 w-72 h-full bg-slate-900 text-slate-200 z-20 shadow-xl transform -translate-x-full transition-transform duration-300 ease-in-out">
+        <div class="p-6">
+            <h2 class="text-3xl font-bold text-sky-400">Foco TDAH</h2>
+            <p class="text-slate-400 text-sm">Seu assistente</p>
+        </div>
+        <nav class="mt-6">
+            <a href="#" data-action="nav-main" class="flex items-center space-x-3 px-6 py-4 text-lg text-slate-200 hover:bg-slate-800 hover:text-white transition-colors duration-200">
+                <i data-lucide="layout-dashboard" class="text-slate-400"></i>
+                <span>Painel Principal</span>
+            </a>
+            <a href="#" data-action="nav-routineStats" class="flex items-center space-x-3 px-6 py-4 text-lg text-slate-200 hover:bg-slate-800 hover:text-white transition-colors duration-200">
+                <i data-lucide="pie-chart" class="text-slate-400"></i>
+                <span>Estatísticas (Rotinas)</span>
+            </a>
+            <a href="#" data-action="nav-journalView" class="flex items-center space-x-3 px-6 py-4 text-lg text-slate-200 hover:bg-slate-800 hover:text-white transition-colors duration-200">
+                <i data-lucide="book-open" class="text-slate-400"></i>
+                <span>Ver Diário</span>
+            </a>
+            <a href="#" data-action="nav-taskCalendar" class="flex items-center space-x-3 px-6 py-4 text-lg text-slate-200 hover:bg-slate-800 hover:text-white transition-colors duration-200">
+                <i data-lucide="calendar-days" class="text-slate-400"></i>
+                <span>Calendário (Tarefas)</span>
+            </a>
+            <a href="#" data-action="nav-goalView" class="flex items-center space-x-3 px-6 py-4 text-lg text-slate-200 hover:bg-slate-800 hover:text-white transition-colors duration-200">
+                <i data-lucide="target" class="text-slate-400"></i>
+                <span>Ver Objetivos</span>
+            </a>
+        </nav>
+    </div>
+
+    <!-- Conteúdo Principal -->
+    <div class="min-h-screen">
+        <!-- Header Principal -->
+        <header class="bg-white shadow-md sticky top-0 z-0 border-b border-slate-200">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="flex justify-between items-center h-20">
+                    <!-- Botão Menu -->
+                    <button data-action="open-menu" class="text-slate-600 hover:text-sky-600 transition-colors">
+                        <i data-lucide="menu" class="w-8 h-8"></i>
+                    </button>
+                    <!-- Data -->
+                    <div class="text-center">
+                        <h1 class="text-2xl font-bold text-slate-900">Painel Principal</h1>
+                        <p id="header-date" class="text-sm text-slate-500 font-medium"></p>
+                    </div>
+                    <!-- Espaçador (ou ícone de perfil) -->
+                    <div class="w-8"></div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Container da Página -->
+        <main id="app-container" class="pb-24">
+            <!-- O conteúdo da página é renderizado aqui pelo JavaScript -->
+            <!-- Loading Spinner -->
+             <div class="flex justify-center items-center h-64">
+                <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-sky-500"></div>
+            </div>
+        </main>
+    </div>
+    
+    <!-- Container do Modal -->
+    <div id="modal-container">
+        <!-- O modal é renderizado aqui pelo JavaScript -->
+    </div>
+
+</body>
+</html>
+
