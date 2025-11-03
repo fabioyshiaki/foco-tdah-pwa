@@ -70,7 +70,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "2.5.0 (Placar de Rotinas Mensal)";
+        const appVersion = "2.5.1 (Lógica de Contagem Mensal)";
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -209,7 +209,7 @@
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register(swUrl)
-                    .then(registration => console.log('Service Worker v2.5.0 registrado', registration.scope))
+                    .then(registration => console.log('Service Worker v2.5.1 registrado', registration.scope))
                     .catch(error => console.error('Falha no registro do Service Worker', error));
             });
         }
@@ -902,15 +902,23 @@
                 </div>
             `;
         }
-
+        
         // --- NOVO (v2.5.0): Lógica e Renderização da Contagem Mensal por Rotina ---
         function aggregateMonthlyRoutineStats() {
-            if (routineHistory.length === 0) return [];
+            if (allRoutines.length === 0) return [];
 
             const statsByMonth = {}; // ex: { "2025-10": { monthName, routines: {} } }
+            
+            // 1. Encontra a primeira data de histórico
+            const earliestEntry = routineHistory.sort((a, b) => a.date.localeCompare(b.date))[0];
+            if (!earliestEntry) return []; // Sem histórico, sem estatísticas
 
-            routineHistory.forEach(entry => {
-                const [year, month] = entry.date.split('-');
+            let loopDate = new Date(earliestEntry.date + 'T00:00:00'); // Começa do primeiro dia
+
+            // 2. Itera dia por dia desde o início até ONTEM
+            while (loopDate < todayDate) {
+                const dateString = getLocalYYYYMMDD(loopDate);
+                const [year, month] = dateString.split('-');
                 const monthKey = `${year}-${month}`;
 
                 // Init month
@@ -922,27 +930,38 @@
                         routines: {}
                     };
                 }
+                
+                const dayEntries = routineHistory.filter(h => h.date === dateString);
 
-                const routineId = entry.routineId;
-                // Init routine
-                if (!statsByMonth[monthKey].routines[routineId]) {
-                    // Find the routine name from the main list, fallback to the history one
-                    const routine = allRoutines.find(r => r.id === routineId);
-                    statsByMonth[monthKey].routines[routineId] = {
-                        id: routineId,
-                        name: routine ? routine.name : (entry.routineName || "Rotina Excluída"),
-                        completed: 0,
-                        missed: 0
-                    };
-                }
+                // 3. Para cada dia, verifica TODAS as rotinas
+                allRoutines.forEach(routine => {
+                    const routineId = routine.id;
+                    const routineName = routine.name;
 
-                // Count
-                if (entry.completed) {
-                    statsByMonth[monthKey].routines[routineId].completed++;
-                } else {
-                    statsByMonth[monthKey].routines[routineId].missed++;
-                }
-            });
+                    // Init routine for that month
+                    if (!statsByMonth[monthKey].routines[routineId]) {
+                        statsByMonth[monthKey].routines[routineId] = {
+                            id: routineId,
+                            name: routineName,
+                            completed: 0,
+                            missed: 0
+                        };
+                    }
+
+                    // 4. Verifica se a rotina foi feita
+                    const entry = dayEntries.find(h => h.routineId === routineId);
+                    
+                    if (entry && entry.completed) {
+                        statsByMonth[monthKey].routines[routineId].completed++;
+                    } else {
+                        // Conta como "missed" se não houver entrada ou se a entrada for "completed: false"
+                        statsByMonth[monthKey].routines[routineId].missed++;
+                    }
+                });
+                
+                // Incrementa o dia do loop
+                loopDate.setDate(loopDate.getDate() + 1);
+            }
             
             // Converte para array e sort
             const statsArray = Object.values(statsByMonth);
@@ -968,7 +987,7 @@
             `;
 
             if (statsArray.length === 0) {
-                html += `<p class="text-slate-500 dark:text-slate-400 text-lg">Nenhum histórico de rotina encontrado.</p>`;
+                html += `<p class="text-slate-500 dark:text-slate-400 text-lg">Nenhum histórico de rotina encontrado. (Os dados aparecem no dia seguinte)</p>`;
             } else {
                 html += statsArray.map(monthStats => {
                     return `
@@ -1002,7 +1021,6 @@
             return html;
         }
         // --- FIM DA NOVA SEÇÃO ---
-
 
         // --- PÁGINA DE ESTATÍSTICAS COM GRÁFICOS (v2.0.0) ---
         function renderRoutineCharts() {
