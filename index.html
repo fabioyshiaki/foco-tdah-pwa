@@ -70,7 +70,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "2.5.0 (Contagem Mensal)";
+        const appVersion = "2.5.0 (Placar de Rotinas Mensal)";
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -892,48 +892,68 @@
 
         // --- Renderização das Páginas do Menu ---
         
-        // --- PÁGINA DE PROGRESSO (v2.1.0) ---
+        // --- PÁGINA DE PROGRESSO (v2.5.0 - REORDENADA) ---
         function renderProgressPage() {
             return `
                 <div class="p-4 flex flex-col gap-6">
                     ${renderRoutineCharts()}
+                    ${renderMonthlyStatsList()} <!-- MOVIDO PARA CIMA -->
                     ${renderGoalStats()}
-                    ${renderMonthlyStatsList()} <!-- NOVO (v2.5.0) -->
                 </div>
             `;
         }
-        
-        // --- NOVO (v2.5.0): Estatísticas Mensais ---
+
+        // --- NOVO (v2.5.0): Lógica e Renderização da Contagem Mensal por Rotina ---
         function aggregateMonthlyRoutineStats() {
-            const totalRoutines = allRoutines.length;
-            if (totalRoutines === 0 || routineHistory.length === 0) return [];
+            if (routineHistory.length === 0) return [];
 
-            const uniqueDays = [...new Set(routineHistory.map(h => h.date))];
-            const statsByMonth = {};
+            const statsByMonth = {}; // ex: { "2025-10": { monthName, routines: {} } }
 
-            uniqueDays.forEach(dateString => {
-                const [year, month] = dateString.split('-'); // "2025-10-31" -> "2025", "10"
+            routineHistory.forEach(entry => {
+                const [year, month] = entry.date.split('-');
                 const monthKey = `${year}-${month}`;
 
+                // Init month
                 if (!statsByMonth[monthKey]) {
                     const monthDate = new Date(year, month - 1, 1);
                     statsByMonth[monthKey] = {
                         monthName: monthDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }),
+                        monthKey: monthKey, // for sorting
+                        routines: {}
+                    };
+                }
+
+                const routineId = entry.routineId;
+                // Init routine
+                if (!statsByMonth[monthKey].routines[routineId]) {
+                    // Find the routine name from the main list, fallback to the history one
+                    const routine = allRoutines.find(r => r.id === routineId);
+                    statsByMonth[monthKey].routines[routineId] = {
+                        id: routineId,
+                        name: routine ? routine.name : (entry.routineName || "Rotina Excluída"),
                         completed: 0,
                         missed: 0
                     };
                 }
 
-                const completedOnDay = routineHistory.filter(h => h.date === dateString && h.completed).length;
-                const missedOnDay = totalRoutines - completedOnDay; // Assumes user was active if any entry exists
-
-                statsByMonth[monthKey].completed += completedOnDay;
-                statsByMonth[monthKey].missed += missedOnDay;
+                // Count
+                if (entry.completed) {
+                    statsByMonth[monthKey].routines[routineId].completed++;
+                } else {
+                    statsByMonth[monthKey].routines[routineId].missed++;
+                }
             });
             
-            // Converte para array e ordena
+            // Converte para array e sort
             const statsArray = Object.values(statsByMonth);
-            statsArray.sort((a, b) => b.completed - a.completed); // Maior para menor
+            // Sort months (newest first)
+            statsArray.sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+            
+            // Convert nested routines to array and sort (most completed first)
+            statsArray.forEach(month => {
+                month.routines = Object.values(month.routines);
+                month.routines.sort((a, b) => b.completed - a.completed);
+            });
             
             return statsArray;
         }
@@ -943,8 +963,8 @@
 
             let html = `
                 <div class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-xl">
-                    <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100 mb-6">Contagem Mensal de Rotinas</h2>
-                    <div class="space-y-4">
+                    <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100 mb-6">Contagem Mensal por Rotina</h2>
+                    <div class="space-y-6">
             `;
 
             if (statsArray.length === 0) {
@@ -952,17 +972,26 @@
             } else {
                 html += statsArray.map(monthStats => {
                     return `
-                        <div class="p-4 bg-slate-50 dark:bg-slate-700 rounded-lg">
-                            <h3 class="text-xl font-semibold text-sky-700 dark:text-sky-500 capitalize">${monthStats.monthName}</h3>
-                            <div class="mt-2 flex justify-around items-center">
-                                <div class="text-center">
-                                    <p class="text-3xl font-bold text-emerald-500">${monthStats.completed}</p>
-                                    <p class="text-sm text-slate-600 dark:text-slate-400">Cumpridas</p>
+                        <div class="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
+                            <h3 class="text-xl font-semibold text-sky-700 dark:text-sky-500 capitalize mb-4">${monthStats.monthName}</h3>
+                            <div class="space-y-3">
+                            ${monthStats.routines.map(routine => {
+                                return `
+                                <div class="flex justify-between items-center bg-white dark:bg-slate-700 p-3 rounded-md shadow-sm">
+                                    <span class="text-slate-800 dark:text-slate-100 font-medium text-lg">${routine.name}</span>
+                                    <div class="flex gap-4">
+                                        <div class="text-center">
+                                            <p class="text-xl font-bold text-emerald-500">${routine.completed}</p>
+                                            <p class="text-xs text-slate-500 dark:text-slate-400">OK</p>
+                                        </div>
+                                        <div class="text-center">
+                                            <p class="text-xl font-bold text-rose-500">${routine.missed}</p>
+                                            <p class="text-xs text-slate-500 dark:text-slate-400">Não</p>
+                                        </div>
+                                    </div>
                                 </div>
-                                <div class="text-center">
-                                    <p class="text-3xl font-bold text-rose-500">${monthStats.missed}</p>
-                                    <p class="text-sm text-slate-600 dark:text-slate-400">Não Cumpridas</p>
-                                </div>
+                                `;
+                            }).join('')}
                             </div>
                         </div>
                     `;
@@ -972,6 +1001,8 @@
             html += `</div></div>`;
             return html;
         }
+        // --- FIM DA NOVA SEÇÃO ---
+
 
         // --- PÁGINA DE ESTATÍSTICAS COM GRÁFICOS (v2.0.0) ---
         function renderRoutineCharts() {
