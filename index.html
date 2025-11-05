@@ -58,7 +58,7 @@
             getDoc, 
             setDoc, 
             addDoc, 
-            updateDoc, 
+            updateDoc, // Este é o updateDoc do Firestore
             deleteDoc, 
             onSnapshot, 
             collection, 
@@ -66,11 +66,12 @@
             where, 
             writeBatch,
             getDocs,
-            terminate 
+            terminate,
+            arrayUnion
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "2.5.1 (Lógica de Contagem Mensal)";
+        const appVersion = "2.6.0 (Estatísticas Corrigidas)";
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -87,6 +88,7 @@
         // Objeto global para guardar instâncias dos gráficos e calendário
         window.myCharts = {};
         window.myCalendar = null;
+        window.reminderInterval = null; 
         
         let db, auth, userId, appId;
         let dbPathPrefix = '';
@@ -106,10 +108,11 @@
         // Estado da UI
         let authState = 'VERIFICANDO'; // 'VERIFICANDO', 'LOGADO', 'DESLOGADO'
         let currentPage = 'main'; // main, journalView, taskCalendar, progress
-        let currentModal = null; // addRoutine, addTask, addGoal, settings, taskDayView, addAlert
+        let currentModal = null; // addRoutine, addTask, addGoal, settings, taskDayView, addAlert, taskReminder
         let currentCalendarDate = new Date();
         let currentTheme = 'light'; // 'light' ou 'dark'
         let selectedDate = null; // Guarda o dia clicado no calendário
+        let taskForReminder = null; // Guarda a tarefa do lembrete
         
         // --- Fonte Única de Verdade para "Hoje" (BASEADO NO LOCAL) ---
         const todayDate = new Date();
@@ -209,7 +212,7 @@
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register(swUrl)
-                    .then(registration => console.log('Service Worker v2.5.1 registrado', registration.scope))
+                    .then(registration => console.log('Service Worker v2.6.0 registrado', registration.scope))
                     .catch(error => console.error('Falha no registro do Service Worker', error));
             });
         }
@@ -248,6 +251,11 @@
             
             loadAllData();
             render();
+            
+            // Inicia o verificador de lembretes
+            if (window.reminderInterval) clearInterval(window.reminderInterval);
+            window.reminderInterval = setInterval(checkTaskReminders, 60000); // Roda a cada 60 segundos
+            checkTaskReminders(); // Roda uma vez imediatamente
         }
         
         function setLoggedOutState(error) {
@@ -259,6 +267,11 @@
             clearAllData();
             unsubscribes.forEach(unsub => unsub());
             unsubscribes = [];
+            
+            // Para o verificador de lembretes
+            if (window.reminderInterval) clearInterval(window.reminderInterval);
+            window.reminderInterval = null;
+            
             render();
         }
 
@@ -903,7 +916,7 @@
             `;
         }
         
-        // --- NOVO (v2.5.0): Lógica e Renderização da Contagem Mensal por Rotina ---
+        // --- NOVO (v2.5.1): Lógica e Renderização da Contagem Mensal por Rotina ---
         function aggregateMonthlyRoutineStats() {
             if (allRoutines.length === 0) return [];
 
@@ -933,8 +946,10 @@
                 
                 const dayEntries = routineHistory.filter(h => h.date === dateString);
 
-                // 3. Para cada dia, verifica TODAS as rotinas
-                allRoutines.forEach(routine => {
+                // 3. Para cada dia, verifica APENAS as rotinas que já existiam
+                const activeRoutinesOnDay = allRoutines.filter(r => new Date(r.createdAt) <= loopDate);
+
+                activeRoutinesOnDay.forEach(routine => {
                     const routineId = routine.id;
                     const routineName = routine.name;
 
@@ -944,7 +959,7 @@
                             id: routineId,
                             name: routineName,
                             completed: 0,
-                            missed: 0
+                            missed: 0 // "Missed" só começa a contar a partir daqui
                         };
                     }
 
@@ -1084,14 +1099,16 @@
             renderYearChart();
         }
         
-        // --- MUDANÇA v2.4.4: Adiciona texto no centro ---
+        // --- MUDANÇA v2.6.0: Lógica de 'total' corrigida ---
         function renderTodayChart() {
             const ctx = document.getElementById('todayChart')?.getContext('2d');
             if (!ctx) return;
+            
+            const activeRoutinesToday = allRoutines.filter(r => new Date(r.createdAt) <= todayDate);
+            const total = activeRoutinesToday.length;
 
             const todayEntries = routineHistory.filter(h => h.date === todayString);
             const completed = todayEntries.filter(h => h.completed).length;
-            const total = allRoutines.length;
             const pending = total - completed;
             
             const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
@@ -1155,6 +1172,7 @@
             });
         }
         
+        // --- MUDANÇA v2.6.0: Lógica de 'total' corrigida ---
         function renderWeekChart() {
             const ctx = document.getElementById('weekChart')?.getContext('2d');
             if (!ctx) return;
@@ -1162,18 +1180,22 @@
             const labels = [];
             const data = [];
             const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
-            const totalRoutines = allRoutines.length > 0 ? allRoutines.length : 1; // Evita divisão por zero
 
             for (let i = 6; i >= 0; i--) {
-                const date = new Date(todayDate);
-                date.setDate(date.getDate() - i);
+                const date = new Date();
+                date.setHours(0,0,0,0); // Garante que é meia-noite
+                date.setDate(todayDate.getDate() - i);
                 
                 const dateString = getLocalYYYYMMDD(date);
                 const dayLabel = dayNames[date.getDay()];
                 labels.push(dayLabel);
                 
+                // Lógica corrigida:
+                const activeRoutinesOnDay = allRoutines.filter(r => new Date(r.createdAt) <= date).length;
+                const totalPossible = activeRoutinesOnDay > 0 ? activeRoutinesOnDay : 1;
+                
                 const completed = routineHistory.filter(h => h.date === dateString && h.completed).length;
-                const percentage = (completed / totalRoutines) * 100;
+                const percentage = (completed / totalPossible) * 100;
                 data.push(percentage);
             }
 
@@ -1207,36 +1229,40 @@
             });
         }
         
+        // --- MUDANÇA v2.6.0: Lógica de 'total' corrigida ---
         function renderMonthChart() {
             const ctx = document.getElementById('monthChart')?.getContext('2d');
             if (!ctx) return;
             
             const labels = ['Sem 4', 'Sem 3', 'Sem 2', 'Sem 1 (Atual)'];
             const data = [];
-            const totalRoutines = allRoutines.length > 0 ? allRoutines.length : 1;
 
             for (let w = 3; w >= 0; w--) {
                 const weekStart = new Date(todayDate);
                 weekStart.setDate(weekStart.getDate() - (w * 7) - todayDate.getDay()); // Início da semana (Dom)
+                weekStart.setHours(0,0,0,0);
                 
                 let completedCount = 0;
-                let dayCount = 0;
-                
+                let totalPossibleInWeek = 0; // <-- NOVO
+
                 for (let d = 0; d < 7; d++) {
                     const date = new Date(weekStart);
                     date.setDate(date.getDate() + d);
-                    const dateString = getLocalYYYYMMDD(date);
                     
                     // Só conta dias até "hoje"
                     if (date <= todayDate) {
-                        const entries = routineHistory.filter(h => h.date === dateString && h.completed);
-                        completedCount += entries.length;
-                        dayCount++;
+                        const dateString = getLocalYYYYMMDD(date);
+                        // Conta quantas rotinas *existiam* nesse dia
+                        const activeRoutinesOnDay = allRoutines.filter(r => new Date(r.createdAt) <= date).length;
+                        totalPossibleInWeek += activeRoutinesOnDay;
+                        
+                        // Conta quantas foram *completadas* nesse dia
+                        const completedOnDay = routineHistory.filter(h => h.date === dateString && h.completed).length;
+                        completedCount += completedOnDay;
                     }
                 }
                 
-                const totalPossible = dayCount * totalRoutines;
-                const percentage = totalPossible > 0 ? (completedCount / totalPossible) * 100 : 0;
+                const percentage = totalPossibleInWeek > 0 ? (completedCount / totalPossibleInWeek) * 100 : 0;
                 data.push(percentage);
             }
 
@@ -1270,37 +1296,49 @@
             });
         }
         
+        // --- MUDANÇA v2.6.0: Lógica de 'total' corrigida ---
         function renderYearChart() {
             const ctx = document.getElementById('yearChart')?.getContext('2d');
             if (!ctx) return;
 
             const labels = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
-            const data = Array(12).fill(0);
-            const daysInMonth = Array(12).fill(0).map((_, i) => new Date(todayDate.getFullYear(), i + 1, 0).getDate());
-            const totalRoutines = allRoutines.length > 0 ? allRoutines.length : 1;
+            const completedData = Array(12).fill(0);
+            const totalPossibleData = Array(12).fill(0);
+            
             const currentYear = todayDate.getFullYear();
             const currentMonth = todayDate.getMonth();
 
+            // Pega entradas de rotina apenas deste ano
             const yearEntries = routineHistory.filter(h => h.date.startsWith(currentYear));
 
             yearEntries.forEach(h => {
                 const month = parseInt(h.date.split('-')[1], 10) - 1; // 0-11
                 if (h.completed) {
-                    data[month]++;
+                    completedData[month]++; // Soma conclusões
                 }
             });
             
-            // Calcula porcentagem
-            const percentageData = data.map((completedCount, month) => {
-                let totalDaysInMonth = daysInMonth[month];
-                if(month === currentMonth) {
-                    totalDaysInMonth = todayDate.getDate();
-                }
-                if (month > currentMonth) {
-                    totalDaysInMonth = 0;
-                }
+            // Calcula o total possível para cada mês
+            for (let month = 0; month <= 11; month++) {
+                if (month > currentMonth) break; // Não calcula para meses futuros
                 
-                const totalPossible = totalDaysInMonth * totalRoutines;
+                const daysInThisMonth = (month === currentMonth) 
+                    ? todayDate.getDate() // Mês atual: conta só até hoje
+                    : new Date(currentYear, month + 1, 0).getDate(); // Mês passado: conta cheio
+                
+                let totalPossibleInMonth = 0;
+                for (let day = 1; day <= daysInThisMonth; day++) {
+                    const date = new Date(currentYear, month, day);
+                    date.setHours(0,0,0,0);
+                    
+                    totalPossibleInMonth += allRoutines.filter(r => new Date(r.createdAt) <= date).length;
+                }
+                totalPossibleData[month] = totalPossibleInMonth;
+            }
+            
+            // Calcula porcentagem
+            const percentageData = completedData.map((completedCount, month) => {
+                const totalPossible = totalPossibleData[month];
                 return totalPossible > 0 ? (completedCount / totalPossible) * 100 : 0;
             });
 
@@ -1528,6 +1566,7 @@
             const modalContainer = document.getElementById('modal-container');
             if (!currentModal) {
                 selectedDate = null; // Limpa a data selecionada
+                taskForReminder = null; // Limpa a tarefa do lembrete
                 modalContainer.innerHTML = '';
                 return;
             }
@@ -1682,15 +1721,52 @@
                         </button>
                     `;
                     break;
+                // --- NOVO MODAL DE LEMBRETE (v2.6.0) ---
+                case 'taskReminder':
+                    if (!taskForReminder) {
+                        currentModal = null;
+                        return;
+                    }
+                    const isFinalReminder = taskForReminder.level === 10;
+                    modalTitle = `Lembrete de Tarefa!`;
+                    modalContent = `
+                        <div class="space-y-6">
+                            <h4 class="text-2xl font-semibold text-slate-800 dark:text-slate-100">${taskForReminder.name}</h4>
+                            <p class="text-lg text-rose-600 dark:text-rose-400 font-bold flex items-center">
+                                <i data-lucide="clock" class="inline-block w-5 h-5 mr-2"></i>
+                                Começa em ${taskForReminder.level} minutos (às ${taskForReminder.time})
+                            </p>
+                            
+                            <!-- Botão de Concluir -->
+                            <button data-action="toggle-task" data-id="${taskForReminder.id}" data-completed="false" class="bg-emerald-600 hover:bg-emerald-700 flex items-center justify-center space-x-3 w-full text-white text-lg font-semibold py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition-all">
+                                <i data-lucide="check-circle" class="w-5 h-5"></i>
+                                <span>Marcar como Concluída</span>
+                            </button>
+                            
+                            <!-- Botão de Fechar / Cancelar -->
+                            ${isFinalReminder ? `
+                            <button data-action="delete-task" data-id="${taskForReminder.id}" class="flex items-center justify-center space-x-3 w-full bg-rose-600 text-white text-lg font-semibold py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition-all hover:bg-rose-700">
+                                <i data-lucide="trash-2" class="w-5 h-5"></i>
+                                <span>Cancelar Tarefa</span>
+                            </button>
+                            ` : `
+                            <button data-action="close-modal" class="flex items-center justify-center space-x-3 w-full bg-slate-500 text-white text-lg font-semibold py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition-all hover:bg-slate-600">
+                                <i data-lucide="x" class="w-5 h-5"></i>
+                                <span>Fechar</span>
+                            </button>
+                            `}
+                        </div>
+                    `;
+                    break;
             }
 
             modalContainer.innerHTML = `
-                <div class="fixed inset-0 bg-black/70 backdrop-blur-sm z-40" data-action="close-modal"></div>
+                <div class="fixed inset-0 bg-black/70 backdrop-blur-sm z-40" data-action="close-modal-bg"></div>
                 <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
                     <div class="bg-white dark:bg-slate-800 w-full max-w-md p-6 rounded-2xl shadow-2xl">
                         <div class="flex justify-between items-center mb-5">
                             <h3 class="text-3xl font-bold text-slate-800 dark:text-slate-100">${modalTitle}</h3>
-                            <button data-action="close-modal" class="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300">
+                            <button data-action="close-modal" class="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 ${currentModal === 'taskReminder' && taskForReminder && taskForReminder.level === 10 ? 'hidden' : ''}">
                                 <i data-lucide="x" class="w-8 h-8"></i>
                             </button>
                         </div>
@@ -1985,6 +2061,7 @@
                         name: name,
                         date: date,
                         time: time, // <-- NOVO
+                        notifiedAt: [], // <-- NOVO para lembretes
                         completed: false,
                         createdAt: new Date().toISOString()
                     });
@@ -2007,9 +2084,7 @@
                 });
                 
                 // CORREÇÃO v2.2.3: Recarrega o modal do dia para mostrar a mudança
-                if (currentModal === 'taskDayView') {
-                    // Recarrega o modal com os dados atualizados (o onSnapshot vai atualizar 'allTasks')
-                    // A forma mais simples é só fechar o modal.
+                if (currentModal === 'taskDayView' || currentModal === 'taskReminder') {
                     currentModal = null;
                     renderModal();
                 } else {
@@ -2043,7 +2118,7 @@
         async function handleAddGoal() {
             const input = document.getElementById('goal-name');
             const name = input.value.trim();
-            if (name && userId) {
+            if (name && userId) { 
                 try {
                     await addDoc(collection(db, `${dbPathPrefix}/goals`), {
                         name: name,
@@ -2145,6 +2220,56 @@
             if (diffDays <= 2) return { text: `${diffDays} ${diffDays === 1 ? 'dia' : 'dias'}`, color: "rose" };
             if (diffDays <= 4) return { text: `${diffDays} dias`, color: "orange" };
             return { text: `${diffDays} dias`, color: "emerald" };
+        }
+        
+        // --- NOVA FUNÇÃO DE LEMBRETE (v2.6.0) ---
+        function checkTaskReminders() {
+            if (!allTasks || allTasks.length === 0 || currentModal !== null) {
+                return; // Não faz nada se não houver tarefas ou se um modal já estiver aberto
+            }
+            
+            const now = new Date();
+            
+            for (const task of allTasks) {
+                if (task.completed || !task.time) continue; // Ignora concluídas ou sem hora
+
+                const [year, month, day] = task.date.split('-').map(Number);
+                const [hour, minute] = task.time.split(':').map(Number);
+                const taskDate = new Date(year, month - 1, day, hour, minute);
+                
+                const diffMs = taskDate.getTime() - now.getTime();
+                const minutesUntilDue = Math.ceil(diffMs / (1000 * 60));
+                
+                const notifiedAt = task.notifiedAt || [];
+
+                // Define os níveis de lembrete
+                const reminderLevels = [60, 30, 15, 10];
+                
+                for (const level of reminderLevels) {
+                    if (minutesUntilDue > 0 && minutesUntilDue <= level && !notifiedAt.includes(level)) {
+                        console.log(`Disparando lembrete de ${level} min para: ${task.name}`);
+                        taskForReminder = { ...task, level: level }; // Salva a tarefa para o modal
+                        currentModal = 'taskReminder';
+                        renderModal(); // Mostra o modal de lembrete
+                        
+                        // Marca este nível como notificado no DB
+                        updateTaskNotified(task.id, level);
+                        return; // Só mostra um lembrete de cada vez
+                    }
+                }
+            }
+        }
+        
+        async function updateTaskNotified(taskId, level) {
+             if (!userId) return;
+             try {
+                const taskDocRef = doc(db, `${dbPathPrefix}/tasks`, taskId);
+                await updateDoc(taskDocRef, {
+                    notifiedAt: arrayUnion(level) // Adiciona o nível ao array
+                });
+            } catch (error) {
+                console.error("Erro ao atualizar 'notifiedAt' da tarefa:", error);
+            }
         }
 
 
@@ -2294,4 +2419,3 @@
 
 </body>
 </html>
-
