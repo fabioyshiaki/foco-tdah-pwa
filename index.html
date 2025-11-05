@@ -76,13 +76,24 @@
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
         // COLE SUA CHAVE 'apiKey' SECRETA NA LINHA ABAIXO:
-        const firebaseConfig = {
-          apiKey: "AIzaSyBUG85P90L8eFjV3-rcI9X7G64v15JpVio", // <-- COLE SUA CHAVE AQUI
-          authDomain: "meu-foco-pwa.firebaseapp.com",
-          projectId: "meu-foco-pwa",
-          storageBucket: "meu-foco-pwa.firebasestorage.app",
-          messagingSenderId: "126519054955"
-        };
+        // Import the functions you need from the SDKs you need
+import { initializeApp } from "firebase/app";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
+
+// Your web app's Firebase configuration
+const firebaseConfig = {
+  apiKey: "AIzaSyBUG85P90L8eFjV3-rcI9X7G64v15JpVio",
+  authDomain: "meu-foco-pwa.firebaseapp.com",
+  databaseURL: "https://meu-foco-pwa-default-rtdb.firebaseio.com",
+  projectId: "meu-foco-pwa",
+  storageBucket: "meu-foco-pwa.firebasestorage.app",
+  messagingSenderId: "126519054955",
+  appId: "1:126519054955:web:7576cc1170dc2a17ef972e"
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
         // ----------------------------------------------------
         
         // Objeto global para guardar instâncias dos gráficos e calendário
