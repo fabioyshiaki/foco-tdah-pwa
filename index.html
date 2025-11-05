@@ -71,35 +71,18 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "2.6.2 (Gráficos Interativos)";
+        const appVersion = "2.6.2 (Gráficos Corrigidos e Interativos)";
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
         // COLE SUA CHAVE 'apiKey' SECRETA NA LINHA ABAIXO:
-        // Import the functions you need from the SDKs you need
-import { initializeApp } from "firebase/app";
-// TODO: Add SDKs for Firebase products that you want to use
-// https://firebase.google.com/docs/web/setup#available-libraries
-
-// Your web app's Firebase configuration
-// Import the functions you need from the SDKs you need
-import { initializeApp } from "firebase/app";
-// TODO: Add SDKs for Firebase products that you want to use
-// https://firebase.google.com/docs/web/setup#available-libraries
-
-// Your web app's Firebase configuration
-const firebaseConfig = {
-  apiKey: "AIzaSyCUnLyL9T4OaZsQnie-8ACry9zSm8XlLjU",
-  authDomain: "meu-foco-pwa.firebaseapp.com",
-  databaseURL: "https://meu-foco-pwa-default-rtdb.firebaseio.com",
-  projectId: "meu-foco-pwa",
-  storageBucket: "meu-foco-pwa.firebasestorage.app",
-  messagingSenderId: "126519054955",
-  appId: "1:126519054955:web:7576cc1170dc2a17ef972e"
-};
-
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
+        const firebaseConfig = {
+          apiKey: "AIzaSyCUnLyL9T4OaZsQnie-8ACry9zSm8XlLjU", // <-- COLE SUA CHAVE AQUI
+          authDomain: "meu-foco-pwa.firebaseapp.com",
+          projectId: "meu-foco-pwa",
+          storageBucket: "meu-foco-pwa.firebasestorage.app",
+          messagingSenderId: "126519054955"
+        };
         // ----------------------------------------------------
         
         // Objeto global para guardar instâncias dos gráficos e calendário
@@ -229,7 +212,7 @@ const app = initializeApp(firebaseConfig);
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register(swUrl)
-                    .then(registration => console.log('Service Worker v2.6.1 registrado', registration.scope))
+                    .then(registration => console.log('Service Worker v2.6.2 registrado', registration.scope))
                     .catch(error => console.error('Falha no registro do Service Worker', error));
             });
         }
@@ -922,7 +905,7 @@ const app = initializeApp(firebaseConfig);
 
         // --- Renderização das Páginas do Menu ---
         
-        // --- PÁGINA DE PROGRESSO (v2.6.1 - REORDENADA) ---
+        // --- PÁGINA DE PROGRESSO (v2.6.1) ---
         function renderProgressPage() {
             return `
                 <div class="p-4 flex flex-col gap-6">
@@ -940,9 +923,11 @@ const app = initializeApp(firebaseConfig);
             const statsByMonth = {}; // ex: { "2025-10": { monthName, routines: {} } }
             
             // 1. Encontra a primeira data de histórico
+            // Se não houver histórico, não há nada a fazer.
+            if (routineHistory.length === 0) return [];
+            
             const earliestEntry = routineHistory.sort((a, b) => a.date.localeCompare(b.date))[0];
-            if (!earliestEntry) return []; // Sem histórico, sem estatísticas
-
+            
             let loopDate = new Date(earliestEntry.date + 'T00:00:00'); // Começa do primeiro dia
 
             // 2. Itera dia por dia desde o início até ONTEM
