@@ -71,7 +71,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "2.6.0 (Estatísticas Corrigidas)";
+        const appVersion = "2.6.1 (Estatísticas Interativas)";
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -108,7 +108,7 @@
         // Estado da UI
         let authState = 'VERIFICANDO'; // 'VERIFICANDO', 'LOGADO', 'DESLOGADO'
         let currentPage = 'main'; // main, journalView, taskCalendar, progress
-        let currentModal = null; // addRoutine, addTask, addGoal, settings, taskDayView, addAlert, taskReminder
+        let currentModal = null; // addRoutine, addTask, addGoal, settings, taskDayView, addAlert, taskReminder, dayRoutineStats
         let currentCalendarDate = new Date();
         let currentTheme = 'light'; // 'light' ou 'dark'
         let selectedDate = null; // Guarda o dia clicado no calendário
@@ -212,7 +212,7 @@
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register(swUrl)
-                    .then(registration => console.log('Service Worker v2.6.0 registrado', registration.scope))
+                    .then(registration => console.log('Service Worker v2.6.1 registrado', registration.scope))
                     .catch(error => console.error('Falha no registro do Service Worker', error));
             });
         }
@@ -905,12 +905,12 @@
 
         // --- Renderização das Páginas do Menu ---
         
-        // --- PÁGINA DE PROGRESSO (v2.5.0 - REORDENADA) ---
+        // --- PÁGINA DE PROGRESSO (v2.6.1 - REORDENADA) ---
         function renderProgressPage() {
             return `
                 <div class="p-4 flex flex-col gap-6">
-                    ${renderRoutineCharts()}
-                    ${renderMonthlyStatsList()} <!-- MOVIDO PARA CIMA -->
+                    ${renderRoutineCharts()} 
+                    ${renderMonthlyStatsList()}
                     ${renderGoalStats()}
                 </div>
             `;
@@ -1037,7 +1037,7 @@
         }
         // --- FIM DA NOVA SEÇÃO ---
 
-        // --- PÁGINA DE ESTATÍSTICAS COM GRÁFICOS (v2.0.0) ---
+        // --- PÁGINA DE ESTATÍSTICAS (v2.6.1) ---
         function renderRoutineCharts() {
             // Esta função agora apenas desenha os containers dos gráficos
             return `
@@ -1053,28 +1053,12 @@
                             </div>
                         </div>
                         
-                        <!-- Gráfico da Semana -->
+                        <!-- NOVO: Placar 7 Dias (v2.6.1) -->
                         <div>
                              <h3 class="text-2xl font-semibold text-slate-700 dark:text-slate-200 mb-4">Últimos 7 Dias</h3>
-                            <div class="h-64">
-                                <canvas id="weekChart"></canvas>
-                            </div>
-                        </div>
-                        
-                        <!-- Gráfico do Mês -->
-                        <div>
-                             <h3 class="text-2xl font-semibold text-slate-700 dark:text-slate-200 mb-4">Últimas 4 Semanas</h3>
-                            <div class="h-64">
-                                <canvas id="monthChart"></canvas>
-                            </div>
-                        </div>
-                        
-                        <!-- Gráfico do Ano -->
-                        <div>
-                             <h3 class="text-2xl font-semibold text-slate-700 dark:text-slate-200 mb-4">Este Ano</h3>
-                            <div class="h-64">
-                                <canvas id="yearChart"></canvas>
-                            </div>
+                             <div class="space-y-2">
+                                ${renderWeekAccordionStats()}
+                             </div>
                         </div>
                         
                     </div>
@@ -1094,16 +1078,15 @@
             window.myCharts = {};
             
             renderTodayChart();
-            renderWeekChart();
-            renderMonthChart();
-            renderYearChart();
+            // Gráficos de barra removidos
         }
         
-        // --- MUDANÇA v2.6.0: Lógica de 'total' corrigida ---
+        // --- MUDANÇA v2.4.4: Adiciona texto no centro ---
         function renderTodayChart() {
             const ctx = document.getElementById('todayChart')?.getContext('2d');
             if (!ctx) return;
             
+            // CORREÇÃO v2.6.1: Calcula total baseado em rotinas ativas *hoje*
             const activeRoutinesToday = allRoutines.filter(r => new Date(r.createdAt) <= todayDate);
             const total = activeRoutinesToday.length;
 
@@ -1172,204 +1155,67 @@
             });
         }
         
-        // --- MUDANÇA v2.6.0: Lógica de 'total' corrigida ---
-        function renderWeekChart() {
-            const ctx = document.getElementById('weekChart')?.getContext('2d');
-            if (!ctx) return;
+        // --- NOVO: PLACAR INTERATIVO 7 DIAS (v2.6.1) ---
+        function renderWeekAccordionStats() {
+            let html = '';
+            const dayNames = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
 
-            const labels = [];
-            const data = [];
-            const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
-
-            for (let i = 6; i >= 0; i--) {
+            for (let i = 0; i < 7; i++) {
                 const date = new Date();
-                date.setHours(0,0,0,0); // Garante que é meia-noite
+                date.setHours(0,0,0,0);
                 date.setDate(todayDate.getDate() - i);
                 
                 const dateString = getLocalYYYYMMDD(date);
-                const dayLabel = dayNames[date.getDay()];
-                labels.push(dayLabel);
                 
-                // Lógica corrigida:
-                const activeRoutinesOnDay = allRoutines.filter(r => new Date(r.createdAt) <= date).length;
-                const totalPossible = activeRoutinesOnDay > 0 ? activeRoutinesOnDay : 1;
+                let dayLabel = dayNames[date.getDay()];
+                if (i === 0) dayLabel = 'Hoje';
+                if (i === 1) dayLabel = 'Ontem';
+
+                // Lógica de cálculo (corrigida para o bug 400%)
+                const activeRoutinesOnDay = allRoutines.filter(r => new Date(r.createdAt) <= date);
+                const totalPossible = activeRoutinesOnDay.length;
                 
-                const completed = routineHistory.filter(h => h.date === dateString && h.completed).length;
-                const percentage = (completed / totalPossible) * 100;
-                data.push(percentage);
+                const dayEntries = routineHistory.filter(h => h.date === dateString);
+                const completedCount = dayEntries.filter(h => h.completed).length;
+                
+                const percentage = totalPossible > 0 ? Math.round((completedCount / totalPossible) * 100) : 0;
+                
+                // Monta o HTML interno (detalhes)
+                let detailsHtml = '';
+                if (activeRoutinesOnDay.length === 0) {
+                    detailsHtml = '<p class="text-sm text-slate-500 dark:text-slate-400 px-4 pb-4">Nenhuma rotina cadastrada neste dia.</p>';
+                } else {
+                    detailsHtml = activeRoutinesOnDay.map(routine => {
+                        const entry = dayEntries.find(h => h.routineId === routine.id);
+                        const isCompleted = entry && entry.completed;
+                        return `
+                            <div class="flex items-center gap-2">
+                                <i data-lucide="${isCompleted ? 'check-circle-2' : 'x-circle'}" class="w-5 h-5 ${isCompleted ? 'text-emerald-500' : 'text-rose-500'} flex-shrink-0"></i>
+                                <span class="text-slate-700 dark:text-slate-200 ${!isCompleted ? 'opacity-60' : ''}">${routine.name}</span>
+                            </div>
+                        `;
+                    }).join('');
+                }
+
+                html += `
+                    <div class="bg-slate-50 dark:bg-slate-700/50 rounded-lg overflow-hidden">
+                        <button data-action="toggle-day-stats" data-day-id="day-${i}" class="w-full flex justify-between items-center p-4">
+                            <div class="flex items-center gap-3">
+                                <span class="text-lg font-semibold text-slate-700 dark:text-slate-200">${dayLabel}</span>
+                                <span class="text-sm text-slate-500 dark:text-slate-400">${date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}</span>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <span class="text-xl font-bold text-sky-600 dark:text-sky-400">${percentage}%</span>
+                                <i data-lucide="chevron-down" class="text-slate-500 transition-transform"></i>
+                            </div>
+                        </button>
+                        <div id="day-${i}" class="hidden space-y-3 px-4 pb-4 border-t border-slate-200 dark:border-slate-600 pt-4">
+                            ${detailsHtml}
+                        </div>
+                    </div>
+                `;
             }
-
-            window.myCharts.weekChart = new Chart(ctx, {
-                type: 'bar',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: '% Concluída',
-                        data: data,
-                        backgroundColor: '#0ea5e9', // sky-500
-                        borderRadius: 4
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        y: {
-                            beginAtZero: true,
-                            max: 100,
-                            ticks: {
-                                callback: (value) => `${value}%`
-                            }
-                        }
-                    },
-                    plugins: {
-                        legend: { display: false }
-                    }
-                }
-            });
-        }
-        
-        // --- MUDANÇA v2.6.0: Lógica de 'total' corrigida ---
-        function renderMonthChart() {
-            const ctx = document.getElementById('monthChart')?.getContext('2d');
-            if (!ctx) return;
-            
-            const labels = ['Sem 4', 'Sem 3', 'Sem 2', 'Sem 1 (Atual)'];
-            const data = [];
-
-            for (let w = 3; w >= 0; w--) {
-                const weekStart = new Date(todayDate);
-                weekStart.setDate(weekStart.getDate() - (w * 7) - todayDate.getDay()); // Início da semana (Dom)
-                weekStart.setHours(0,0,0,0);
-                
-                let completedCount = 0;
-                let totalPossibleInWeek = 0; // <-- NOVO
-
-                for (let d = 0; d < 7; d++) {
-                    const date = new Date(weekStart);
-                    date.setDate(date.getDate() + d);
-                    
-                    // Só conta dias até "hoje"
-                    if (date <= todayDate) {
-                        const dateString = getLocalYYYYMMDD(date);
-                        // Conta quantas rotinas *existiam* nesse dia
-                        const activeRoutinesOnDay = allRoutines.filter(r => new Date(r.createdAt) <= date).length;
-                        totalPossibleInWeek += activeRoutinesOnDay;
-                        
-                        // Conta quantas foram *completadas* nesse dia
-                        const completedOnDay = routineHistory.filter(h => h.date === dateString && h.completed).length;
-                        completedCount += completedOnDay;
-                    }
-                }
-                
-                const percentage = totalPossibleInWeek > 0 ? (completedCount / totalPossibleInWeek) * 100 : 0;
-                data.push(percentage);
-            }
-
-            window.myCharts.monthChart = new Chart(ctx, {
-                type: 'bar',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: '% Concluída',
-                        data: data,
-                        backgroundColor: '#0ea5e9',
-                        borderRadius: 4
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        y: {
-                            beginAtZero: true,
-                            max: 100,
-                            ticks: {
-                                callback: (value) => `${value}%`
-                            }
-                        }
-                    },
-                    plugins: {
-                        legend: { display: false }
-                    }
-                }
-            });
-        }
-        
-        // --- MUDANÇA v2.6.0: Lógica de 'total' corrigida ---
-        function renderYearChart() {
-            const ctx = document.getElementById('yearChart')?.getContext('2d');
-            if (!ctx) return;
-
-            const labels = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
-            const completedData = Array(12).fill(0);
-            const totalPossibleData = Array(12).fill(0);
-            
-            const currentYear = todayDate.getFullYear();
-            const currentMonth = todayDate.getMonth();
-
-            // Pega entradas de rotina apenas deste ano
-            const yearEntries = routineHistory.filter(h => h.date.startsWith(currentYear));
-
-            yearEntries.forEach(h => {
-                const month = parseInt(h.date.split('-')[1], 10) - 1; // 0-11
-                if (h.completed) {
-                    completedData[month]++; // Soma conclusões
-                }
-            });
-            
-            // Calcula o total possível para cada mês
-            for (let month = 0; month <= 11; month++) {
-                if (month > currentMonth) break; // Não calcula para meses futuros
-                
-                const daysInThisMonth = (month === currentMonth) 
-                    ? todayDate.getDate() // Mês atual: conta só até hoje
-                    : new Date(currentYear, month + 1, 0).getDate(); // Mês passado: conta cheio
-                
-                let totalPossibleInMonth = 0;
-                for (let day = 1; day <= daysInThisMonth; day++) {
-                    const date = new Date(currentYear, month, day);
-                    date.setHours(0,0,0,0);
-                    
-                    totalPossibleInMonth += allRoutines.filter(r => new Date(r.createdAt) <= date).length;
-                }
-                totalPossibleData[month] = totalPossibleInMonth;
-            }
-            
-            // Calcula porcentagem
-            const percentageData = completedData.map((completedCount, month) => {
-                const totalPossible = totalPossibleData[month];
-                return totalPossible > 0 ? (completedCount / totalPossible) * 100 : 0;
-            });
-
-            window.myCharts.yearChart = new Chart(ctx, {
-                type: 'bar',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: '% Concluída',
-                        data: percentageData,
-                        backgroundColor: '#0ea5e9',
-                        borderRadius: 4
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        y: {
-                            beginAtZero: true,
-                            max: 100,
-                            ticks: {
-                                callback: (value) => `${value}%`
-                            }
-                        }
-                    },
-                    plugins: {
-                        legend: { display: false }
-                    }
-                }
-            });
+            return html;
         }
 
 
@@ -1758,6 +1604,53 @@
                         </div>
                     `;
                     break;
+                // --- NOVO MODAL DE ESTATÍSTICAS (v2.6.1) ---
+                case 'dayRoutineStats': {
+                    if (!selectedDate) {
+                        currentModal = null;
+                        return;
+                    }
+                    
+                    const date = new Date(selectedDate + 'T00:00:00');
+                    const dayName = date.toLocaleDateString('pt-BR', { weekday: 'long' });
+                    modalTitle = `Estatísticas de ${dayName}`;
+                    
+                    // Lógica de cálculo (corrigida para o bug 400%)
+                    const activeRoutinesOnDay = allRoutines.filter(r => new Date(r.createdAt) <= date);
+                    const totalPossible = activeRoutinesOnDay.length;
+                    const dayEntries = routineHistory.filter(h => h.date === selectedDate);
+                    const completedCount = dayEntries.filter(h => h.completed).length;
+                    const percentage = totalPossible > 0 ? Math.round((completedCount / totalPossible) * 100) : 0;
+                    
+                    let detailsHtml = '';
+                    if (activeRoutinesOnDay.length === 0) {
+                        detailsHtml = '<p class="text-sm text-slate-500 dark:text-slate-400">Nenhuma rotina cadastrada neste dia.</p>';
+                    } else {
+                        detailsHtml = activeRoutinesOnDay.map(routine => {
+                            const entry = dayEntries.find(h => h.routineId === routine.id);
+                            const isCompleted = entry && entry.completed;
+                            return `
+                                <div class="flex items-center gap-3 p-3 bg-slate-50 dark:bg-slate-700 rounded-lg">
+                                    <i data-lucide="${isCompleted ? 'check-circle-2' : 'x-circle'}" class="w-5 h-5 ${isCompleted ? 'text-emerald-500' : 'text-rose-500'} flex-shrink-0"></i>
+                                    <span class="text-slate-700 dark:text-slate-200 text-lg ${!isCompleted ? 'opacity-60' : ''}">${routine.name}</span>
+                                </div>
+                            `;
+                        }).join('');
+                    }
+
+                    modalContent = `
+                        <div class="space-y-4">
+                            <div class="text-center">
+                                <p class="text-6xl font-bold text-sky-600 dark:text-sky-400">${percentage}%</p>
+                                <p class="text-lg text-slate-600 dark:text-slate-400 font-semibold">${completedCount} de ${totalPossible} rotinas</p>
+                            </div>
+                            <div class="space-y-2 max-h-64 overflow-y-auto pr-2">
+                                ${detailsHtml}
+                            </div>
+                        </div>
+                    `;
+                    break;
+                }
             }
 
             modalContainer.innerHTML = `
@@ -1827,13 +1720,19 @@
                     return;
                 }
                 
-                // Ação de Acordeão do Diário
-                if (action === 'toggle-month') {
-                    const monthId = target.dataset.monthId;
-                    const content = document.getElementById(monthId);
-                    const icon = target.querySelector('i');
+                // Ação de Acordeão do Diário ou Progresso
+                if (action === 'toggle-month' || action === 'toggle-day-stats') {
+                    const id = target.dataset.monthId || target.dataset.dayId;
+                    const content = document.getElementById(id);
+                    const icon = target.querySelector('i[data-lucide="chevron-down"]');
                     if (content) content.classList.toggle('hidden');
                     if (icon) icon.classList.toggle('rotate-180');
+                    // CORREÇÃO v2.6.1: Recarrega ícones dentro do acordeão
+                    if (content && !content.classList.contains('hidden')) {
+                        setTimeout(() => {
+                           if (typeof lucide !== 'undefined') lucide.createIcons();
+                        }, 50);
+                    }
                     return;
                 }
 
@@ -1961,7 +1860,7 @@
                 try {
                     await addDoc(collection(db, `${dbPathPrefix}/routines`), {
                         name: name,
-                        createdAt: new Date().toISOString()
+                        createdAt: new Date().toISOString() // <-- IMPORTANTE para estatísticas
                     });
                     currentModal = null;
                     renderModal();
