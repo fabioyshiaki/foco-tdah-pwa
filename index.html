@@ -705,7 +705,20 @@
                         <p id="header-date" class="text-sm text-slate-500 dark:text-slate-400 font-medium">${todayFullDate}</p>
                     </div>
                 
-                    <!-- 1. Alertas (NOVO) -->
+                    <!-- 1. Objetivos (MOVIDO PARA O TOPO) -->
+                    <div class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-xl">
+                        <div class="flex justify-between items-center mb-4">
+                            <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100">Objetivos</h2>
+                            <button data-action="open-modal" data-modal="addGoal" class="text-sky-600 hover:text-sky-800 dark:hover:text-sky-400 p-1 rounded-full hover:bg-sky-100 dark:hover:bg-slate-700 transition-colors">
+                                <i data-lucide="plus-circle" class="w-7 h-7"></i>
+                            </button>
+                        </div>
+                        <div id="goals-list" class="space-y-3">
+                            ${renderActiveGoals()}
+                        </div>
+                    </div>
+
+                    <!-- 2. Alertas (NOVO) -->
                     <div class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-xl">
                         <div class="flex justify-between items-center mb-4">
                             <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100">Alertas Ativos</h2>
@@ -718,7 +731,7 @@
                         </div>
                     </div>
 
-                    <!-- 2. Próximas Tarefas (MOVIDO PARA CIMA) -->
+                    <!-- 3. Próximas Tarefas (MOVIDO PARA CIMA) -->
                     <div class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-xl">
                         <div class="flex justify-between items-center mb-4">
                             <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100">Próximas Tarefas</h2>
@@ -731,7 +744,7 @@
                         </div>
                     </div>
 
-                    <!-- 3. Rotinas Diárias (MOVIDO PARA BAIXO) -->
+                    <!-- 4. Rotinas Diárias (MOVIDO PARA BAIXO) -->
                     <div class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-xl">
                         <div class="flex justify-between items-center mb-4">
                             <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100">Rotinas</h2>
@@ -744,26 +757,13 @@
                         </div>
                     </div>
 
-                    <!-- 4. Diário -->
+                    <!-- 5. Diário -->
                     <div class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-xl">
                         <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100 mb-4">Diário de Hoje</h2>
                         <textarea id="journal-textarea" class="w-full h-36 p-3 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 dark:placeholder-slate-400 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 transition-colors" placeholder="Como foi o seu dia?"></textarea>
                         <button id="save-journal-btn" class="mt-4 w-full bg-sky-600 text-white text-lg font-bold py-3 px-4 rounded-lg hover:bg-sky-700 shadow-md hover:shadow-lg transition-all">
                             Salvar Diário
                         </button>
-                    </div>
-
-                    <!-- 5. Objetivos (DE VOLTA!) -->
-                    <div class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-xl">
-                        <div class="flex justify-between items-center mb-4">
-                            <h2 class="text-3xl font-bold text-slate-800 dark:text-slate-100">Objetivos</h2>
-                            <button data-action="open-modal" data-modal="addGoal" class="text-sky-600 hover:text-sky-800 dark:hover:text-sky-400 p-1 rounded-full hover:bg-sky-100 dark:hover:bg-slate-700 transition-colors">
-                                <i data-lucide="plus-circle" class="w-7 h-7"></i>
-                            </button>
-                        </div>
-                        <div id="goals-list" class="space-y-3">
-                            ${renderActiveGoals()}
-                        </div>
                     </div>
                 </div>
             `;
