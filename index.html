@@ -71,7 +71,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- VERSÃO DO APP ---
-        const appVersion = "2.6.3 (Hábito Inicial Adicionado)";
+        const appVersion = "2.7.0 (Hábitos Persistentes)";
         // ---------------------
 
         // --- PASSO 1: COLE SUA CONFIGURAÇÃO DO FIREBASE AQUI ---
@@ -103,9 +103,8 @@
         let allGoals = [];
         let allAlerts = [];
         
-        // --- NOVO: Variável para o Hábito de Abertura ---
-        let pinnedHabit = null;
-        let hasShownStartupHabit = false; // Controle para mostrar só 1 vez na sessão
+        // --- NOVO: Variável para lista de Hábitos de Abertura ---
+        let startupHabits = []; // Agora é um array
         // ------------------------------------------------
         
         let unsubscribes = []; 
@@ -233,6 +232,7 @@
             
             initializeAppFirebase();
             setupEventListeners();
+            setupVisibilityListener(); // NOVO: Listener de visibilidade
             render(); // Renderiza o estado inicial (loading spinner)
             
             if (typeof lucide !== 'undefined') {
@@ -241,6 +241,26 @@
                 console.warn("Lucide não carregou a tempo no DOMContentLoaded");
             }
         });
+
+        // --- NOVO: Listener de Visibilidade para Popup Constante ---
+        function setupVisibilityListener() {
+            document.addEventListener("visibilitychange", () => {
+                if (document.visibilityState === 'visible') {
+                    console.log("App visível novamente. Verificando popup de hábito.");
+                    checkStartupHabit();
+                }
+            });
+        }
+
+        function checkStartupHabit() {
+            if (authState === 'LOGADO' && startupHabits.length > 0) {
+                // Só abre se não tiver nenhum modal aberto, para não atrapalhar digitação
+                if (!currentModal) {
+                    currentModal = 'startupHabit';
+                    renderModal();
+                }
+            }
+        }
 
         // --- LÓGICA DE LOGIN ---
         function setLoggedInState(user) {
@@ -272,7 +292,6 @@
             clearAllData();
             unsubscribes.forEach(unsub => unsub());
             unsubscribes = [];
-            hasShownStartupHabit = false; // Reset flag
             
             // Para o verificador de lembretes
             if (window.reminderInterval) clearInterval(window.reminderInterval);
@@ -379,7 +398,7 @@
             allTasks = [];
             allGoals = [];
             allAlerts = [];
-            pinnedHabit = null; // Limpa o hábito
+            startupHabits = []; // Limpa o hábito
         }
 
         // --- FUNÇÕES DE TEMA ---
@@ -480,7 +499,7 @@
             }, (error) => console.error("Erro ao carregar objetivos:", error));
             unsubscribes.push(unsubGoals);
             
-            // NOVO: Carregar Alertas
+            // Carregar Alertas
             const alertsQuery = collection(db, `${dbPathPrefix}/alerts`);
             const unsubAlerts = onSnapshot(alertsQuery, (snapshot) => {
                 allAlerts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -488,32 +507,17 @@
             }, (error) => console.error("Erro ao carregar alertas:", error));
             unsubscribes.push(unsubAlerts);
 
-            // --- NOVO: Carregar Hábito de Abertura (Criação de Hábito) ---
+            // --- NOVO: Carregar Hábito de Abertura ---
             const habitQuery = collection(db, `${dbPathPrefix}/habitCreation`);
             const unsubHabit = onSnapshot(habitQuery, (snapshot) => {
-                if (!snapshot.empty) {
-                    // Pega o documento mais recente se houver mais de um, ou o primeiro
-                    const docs = snapshot.docs.map(doc => ({id: doc.id, ...doc.data()}));
-                    // Ordena por data (mais novo primeiro)
-                    docs.sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
-                    pinnedHabit = docs[0];
-                    
-                    // LÓGICA DE POPUP AUTOMÁTICO NA ABERTURA DO APP
-                    if (pinnedHabit && !hasShownStartupHabit && authState === 'LOGADO') {
-                        // Delay pequeno para garantir que a UI carregou
-                        setTimeout(() => {
-                            // Só abre se não tiver outro modal importante aberto
-                            if(!currentModal) { 
-                                currentModal = 'startupHabit';
-                                renderModal();
-                                hasShownStartupHabit = true; // Marca que já mostrou nesta sessão
-                            }
-                        }, 500);
-                    }
-                } else {
-                    pinnedHabit = null;
-                }
-                // Se o usuário estiver na tela de settings, pode precisar re-renderizar
+                startupHabits = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                // Ordena por data (mais novo primeiro)
+                startupHabits.sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
+                
+                // LÓGICA DE POPUP AUTOMÁTICO (NA ABERTURA E UPDATES)
+                checkStartupHabit();
+                
+                // Se o usuário estiver na tela de settings, pode precisar re-renderizar a lista
                 if (auth.currentUser && currentModal === 'settings') {
                     renderModal();
                 }
@@ -1696,19 +1700,14 @@
                 
                 // --- NOVO (Case createHabit) ---
                 case 'createHabit':
-                    modalTitle = 'Configurar Hábito Inicial';
-                    const currentText = pinnedHabit ? pinnedHabit.text : '';
+                    modalTitle = 'Criar Hábito Inicial';
                     modalContent = `
                         <label for="habit-text" class="block text-lg font-medium text-slate-700 dark:text-slate-200">Descrição do Hábito</label>
-                        <textarea id="habit-text" class="mt-2 block w-full border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 rounded-lg p-3 text-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500" rows="3" placeholder="Ex: Ler 5 páginas de um livro assim que acordar">${currentText}</textarea>
+                        <textarea id="habit-text" class="mt-2 block w-full border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 rounded-lg p-3 text-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500" rows="3" placeholder="Ex: Ler 5 páginas de um livro assim que acordar"></textarea>
                         <p class="text-sm text-slate-500 dark:text-slate-400 mt-2">Este popup aparecerá sempre que você abrir o app, até que você o exclua.</p>
                         
                         <div class="flex gap-3 mt-6">
-                             ${pinnedHabit ? `
-                             <button data-action="delete-habit-creation" data-id="${pinnedHabit.id}" class="flex-1 bg-rose-100 text-rose-700 font-bold text-lg py-3 px-4 rounded-lg hover:bg-rose-200 transition-all border border-rose-200">
-                                Excluir
-                            </button>` : ''}
-                            <button id="save-habit-creation-btn" class="flex-[2] bg-sky-600 text-white font-bold text-lg py-3 px-4 rounded-lg hover:bg-sky-700 shadow-md hover:shadow-lg transition-all">
+                            <button id="save-habit-creation-btn" class="w-full bg-sky-600 text-white font-bold text-lg py-3 px-4 rounded-lg hover:bg-sky-700 shadow-md hover:shadow-lg transition-all">
                                 Salvar
                             </button>
                         </div>
@@ -1717,27 +1716,33 @@
 
                 // --- NOVO (Case startupHabit - O Popup em si) ---
                 case 'startupHabit':
-                    if (!pinnedHabit) { currentModal = null; return; }
-                    modalTitle = 'Hábito Inicial';
-                    // Verifica se foi marcado hoje
-                    const isMarked = pinnedHabit.lastCompletedDate === todayString;
+                    if (startupHabits.length === 0) { currentModal = null; return; }
+                    modalTitle = 'Hábitos Iniciais';
                     
+                    const habitsListHtml = startupHabits.map(habit => {
+                         const isMarked = habit.completed === true; // Verifica booleano
+                         return `
+                            <div class="bg-indigo-50 dark:bg-slate-700/50 p-4 rounded-xl border border-indigo-100 dark:border-slate-600">
+                                <p class="text-xl font-bold text-indigo-700 dark:text-indigo-300 leading-snug mb-3">${habit.text}</p>
+                                <label class="flex items-center space-x-3 cursor-pointer">
+                                    <input type="checkbox" 
+                                        class="form-checkbox h-6 w-6 text-emerald-600 rounded-md border-slate-300 dark:border-slate-500 focus:ring-emerald-500"
+                                        ${isMarked ? 'checked' : ''}
+                                        data-action="toggle-startup-habit"
+                                        data-id="${habit.id}">
+                                    <span class="text-lg text-slate-700 dark:text-slate-200 font-medium">Concluído</span>
+                                </label>
+                            </div>
+                         `;
+                    }).join('<div class="h-4"></div>');
+
                     modalContent = `
-                        <div class="space-y-6 text-center">
-                            <div class="bg-indigo-50 dark:bg-slate-700 p-6 rounded-xl border border-indigo-100 dark:border-slate-600">
-                                <p class="text-2xl font-bold text-indigo-700 dark:text-indigo-300 leading-snug">${pinnedHabit.text}</p>
+                        <div class="space-y-4 text-center">
+                            <div class="max-h-[60vh] overflow-y-auto pr-2">
+                                ${habitsListHtml}
                             </div>
                             
-                            <label class="flex items-center justify-center space-x-4 cursor-pointer p-4 rounded-lg bg-slate-50 dark:bg-slate-700/50 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors border border-slate-200 dark:border-slate-600">
-                                <input type="checkbox" 
-                                       class="form-checkbox h-8 w-8 text-emerald-600 rounded-md border-slate-300 dark:border-slate-500 focus:ring-emerald-500"
-                                       ${isMarked ? 'checked' : ''}
-                                       data-action="toggle-startup-habit"
-                                       data-id="${pinnedHabit.id}">
-                                <span class="text-xl text-slate-700 dark:text-slate-200 font-medium">Marcar como realizado hoje</span>
-                            </label>
-                            
-                            <button data-action="close-modal" class="w-full bg-slate-200 dark:bg-slate-600 text-slate-800 dark:text-slate-200 font-bold text-lg py-3 px-4 rounded-lg hover:bg-slate-300 dark:hover:bg-slate-500 transition-all">
+                            <button data-action="close-modal" class="w-full bg-slate-200 dark:bg-slate-600 text-slate-800 dark:text-slate-200 font-bold text-lg py-3 px-4 rounded-lg hover:bg-slate-300 dark:hover:bg-slate-500 transition-all mt-4">
                                 Fechar
                             </button>
                         </div>
@@ -1746,6 +1751,7 @@
 
                 case 'settings':
                     modalTitle = 'Configurações';
+                    
                     // Renderiza a lista de alertas para gerenciamento
                     const allAlertsHtml = allAlerts.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).map(alert => {
                         const isActive = isAlertActive(alert);
@@ -1758,6 +1764,16 @@
                             </div>
                         `;
                     }).join('');
+
+                    // Renderiza a lista de hábitos (agora visível nas configurações)
+                    const allHabitsHtml = startupHabits.map(habit => `
+                        <div class="flex items-center justify-between p-3 bg-indigo-50 dark:bg-slate-700 rounded-lg border border-indigo-100 dark:border-slate-600">
+                            <span class="text-slate-800 dark:text-slate-100 font-medium">${habit.text}</span>
+                            <button data-action="delete-habit-creation" data-id="${habit.id}" class="text-slate-400 dark:text-slate-500 hover:text-rose-500 transition-colors ml-2">
+                                <i data-lucide="trash-2" class="w-5 h-5"></i>
+                            </button>
+                        </div>
+                    `).join('');
                     
                     modalContent = `
                         <div class="space-y-6">
@@ -1772,12 +1788,15 @@
                                 <!-- O botão de tema será renderizado aqui -->
                             </div>
                             
-                            <!-- NOVO: Criação de Hábito (Hábito Inicial) -->
+                            <!-- Gerenciar Hábitos de Abertura -->
                             <div class="border-t border-slate-200 dark:border-slate-700 pt-4">
-                                <p class="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-3">Criação de Hábito</p>
+                                <p class="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-3">Hábitos de Abertura</p>
+                                <div class="space-y-2 mb-3 max-h-48 overflow-y-auto pr-2">
+                                     ${startupHabits.length > 0 ? allHabitsHtml : '<p class="text-sm text-slate-500 dark:text-slate-400">Nenhum hábito criado.</p>'}
+                                </div>
                                 <button data-action="open-modal" data-modal="createHabit" class="flex items-center justify-center space-x-3 w-full bg-indigo-600 text-white text-lg font-semibold py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition-all hover:bg-indigo-700">
                                     <i data-lucide="zap" class="w-5 h-5"></i>
-                                    <span>${pinnedHabit ? 'Editar Hábito' : 'Criar Novo Hábito'}</span>
+                                    <span>Criar Novo Hábito</span>
                                 </button>
                             </div>
                             
@@ -2114,17 +2133,12 @@
             const text = input.value.trim();
             if (text && userId) {
                 try {
-                    // Se já existe um hábito, atualiza, senão cria
-                    if (pinnedHabit) {
-                        const docRef = doc(db, `${dbPathPrefix}/habitCreation`, pinnedHabit.id);
-                        await updateDoc(docRef, { text: text });
-                    } else {
-                        await addDoc(collection(db, `${dbPathPrefix}/habitCreation`), {
-                            text: text,
-                            createdAt: new Date().toISOString(),
-                            lastCompletedDate: null
-                        });
-                    }
+                    await addDoc(collection(db, `${dbPathPrefix}/habitCreation`), {
+                        text: text,
+                        createdAt: new Date().toISOString(),
+                        completed: false // Agora é booleano e persistente
+                    });
+                    
                     // Após salvar, MOSTRA O POPUP IMEDIATAMENTE como preview
                     currentModal = 'startupHabit';
                     renderModal();
@@ -2135,12 +2149,12 @@
         }
 
         async function handleDeleteHabitCreation(id) {
-            showConfirmationModal("Tem certeza que deseja excluir o hábito inicial? O popup não aparecerá mais ao abrir o app.", async () => {
+            showConfirmationModal("Tem certeza que deseja excluir este hábito?", async () => {
                 if (!userId) return;
                 try {
                     await deleteDoc(doc(db, `${dbPathPrefix}/habitCreation`, id));
-                    pinnedHabit = null; // Limpa localmente
-                    currentModal = 'settings'; // Volta para settings
+                    // Mantém na tela de settings
+                    currentModal = 'settings'; 
                     renderModal();
                 } catch (error) {
                     console.error("Erro ao deletar hábito:", error);
@@ -2154,11 +2168,10 @@
             if (!userId) return;
 
             try {
-                // Se marcado, salva a data de hoje. Se desmarcado, null.
-                const newVal = isChecked ? todayString : null;
+                // Atualiza o estado de "completed" persistentemente
                 const docRef = doc(db, `${dbPathPrefix}/habitCreation`, id);
-                await updateDoc(docRef, { lastCompletedDate: newVal });
-                // Não precisa fechar o modal, deixa o usuário ver que marcou
+                await updateDoc(docRef, { completed: isChecked });
+                // Não fecha o modal, só atualiza o estado
             } catch (error) {
                 console.error("Erro ao marcar hábito:", error);
                 checkbox.checked = !isChecked; // Reverte visualmente em caso de erro
